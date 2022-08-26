@@ -1,7 +1,7 @@
-use futures::StreamExt;
+use futures::{AsyncWriteExt, StreamExt};
 
 use crate::config;
-use crate::poll::network::{StreamReader, StreamWriter};
+use crate::poll::network::{ReadWrapper, WriteWrapper};
 
 use super::header;
 use super::{http::*, startline};
@@ -93,8 +93,10 @@ impl Request<stage::MessageBody> {
         mut self,
         config: &config::Config,
         // addr: net::SocketAddr,
-    ) -> Result<StreamWriter<net::TcpStream>, Error> {
+    ) -> Result<WriteWrapper<net::TcpStream>, Error> {
         let (block, mut reader) = self.model.into_parts();
+
+        //bad partice
 
         let reader = &mut reader;
 
@@ -106,9 +108,9 @@ impl Request<stage::MessageBody> {
         };
 
         let upstream = recover!(net::TcpStream::connect(addr), Error::ServerIncompatible);
-        let mut writer = StreamWriter::new(upstream);
+        let mut writer = WriteWrapper::new(upstream);
 
-        recover!(writer.write(block).await, Error::ServerIncompatible);
+        recover!(writer.write(&block).await, Error::ServerIncompatible);
 
         loop {
             if self.content_length == 0 {
@@ -119,7 +121,7 @@ impl Request<stage::MessageBody> {
 
             self.content_length -= plan_to_read;
 
-            recover!(writer.write(chunk).await, Error::ServerIncompatible);
+            recover!(writer.write(&chunk).await, Error::ServerIncompatible);
         }
 
         Ok(writer)
@@ -136,16 +138,15 @@ pub mod reverse_proxy {
         client: net::TcpStream,
         server: net::TcpStream,
     ) -> Result<(), Error> {
-        let mut writer = StreamWriter::new(server);
-        let mut reader = StreamReader::new(client);
+        let mut writer = WriteWrapper::new(server);
+        let mut reader = ReadWrapper::new(client);
 
         let buffer = &mut [0_u8; 4096].to_vec();
         loop {
             let byte_read = match reader.read(buffer).await {
                 Ok(x) => x,
                 Err(err) => match err.kind() {
-                    io::ErrorKind::NotFound
-                    | io::ErrorKind::ConnectionRefused
+                    io::ErrorKind::ConnectionRefused
                     | io::ErrorKind::ConnectionReset
                     | io::ErrorKind::BrokenPipe
                     | io::ErrorKind::UnexpectedEof => {
@@ -154,11 +155,15 @@ pub mod reverse_proxy {
                     _ => unreachable!(),
                 },
             };
-
+            if byte_read == 0 {
+                break;
+            }
             writer
-                .write(buffer[0..byte_read].to_vec())
+                .write(&buffer[0..byte_read].to_vec())
                 .await
                 .map_err(|_| Error::ClientIncompatible)?;
         }
+
+        Ok(())
     }
 }

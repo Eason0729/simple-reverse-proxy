@@ -5,7 +5,7 @@ use std::{
     net,
 };
 
-use crate::poll::{block::*, network::StreamReader};
+use crate::poll::{block::*, stream::ReadableStream};
 
 use super::{header, startline};
 
@@ -40,7 +40,7 @@ where
             stage: PhantomData,
         })
     }
-    pub fn into_parts(mut self) -> (Vec<u8>, StreamReader<C>) {
+    pub fn into_parts(mut self) -> (Vec<u8>, ReadableStream<C>) {
         let in_buffer = self.block.inner_buffer().to_vec(); // untested
         let reader = self.block.inner();
         (in_buffer, reader)

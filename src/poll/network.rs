@@ -1,182 +1,109 @@
-use std::collections::VecDeque;
-use std::{cmp, net};
+use futures::{AsyncRead, AsyncWrite};
+use std::io::{Read, Write};
+use std::{io, task::Poll};
+use std::{marker, net};
 
-use futures::task::Poll;
-use futures::AsyncReadExt;
-use futures::{task, AsyncRead, AsyncWrite};
-use futures::{Future, Stream};
-use std::io::{self, Read, Write};
-use std::pin::Pin;
-
-const BUFFER_SIZE: usize = 4096;
-// struct
-
-#[derive(Debug)]
-pub struct StreamWriter<T>
+pub struct ReadWrapper<I>
 where
-    T: io::Write,
+    I: io::Read,
 {
-    writer: io::BufWriter<T>,
-    buffer: VecDeque<u8>,
+    reader: io::BufReader<I>,
 }
 
-// impl <T> AsyncWrite for StreamWriter<T>{ }
-
-impl<T> StreamWriter<T>
+impl<I> ReadWrapper<I>
 where
-    T: io::Write + std::marker::Unpin,
+    I: io::Read,
 {
-    pub fn new(stream: T) -> StreamWriter<T> {
-        StreamWriter {
-            writer: io::BufWriter::new(stream),
-            buffer: VecDeque::new(),
-        }
-    }
-    pub async fn write(&mut self, content: Vec<u8>) -> Result<(), std::io::Error> {
-        let mut content = VecDeque::from(content);
-        self.buffer.append(&mut content);
-        return if self.await? {
-            Ok(())
-        } else {
-            Err(std::io::ErrorKind::BrokenPipe.into())
-        };
-    }
-    pub async fn inner(mut self) -> Result<T, io::Error> {
-        self.writer.flush()?;
-        Ok(self.writer.into_parts().0)
-    }
-}
-
-impl StreamWriter<net::TcpStream> {
-    pub fn from_tcp_stream(
-        stream: &net::TcpStream,
-    ) -> Result<StreamWriter<net::TcpStream>, io::Error> {
-        let stream = stream.try_clone()?;
-        Ok(StreamWriter {
-            writer: io::BufWriter::new(stream),
-            buffer: VecDeque::new(),
-        })
-    }
-}
-
-impl<T> Future for StreamWriter<T>
-where
-    T: io::Write + std::marker::Unpin,
-{
-    type Output = Result<bool, io::Error>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
-        let s = self.get_mut();
-        s.buffer.make_contiguous();
-        let data = s.buffer.as_slices().0;
-        let byte_sent = match s.writer.write(data) {
-            Ok(x) => x,
-            Err(err) => match err.kind() {
-                io::ErrorKind::ConnectionRefused
-                | io::ErrorKind::ConnectionReset
-                | io::ErrorKind::BrokenPipe
-                | io::ErrorKind::Interrupted => {
-                    return Poll::Ready(Ok(false));
-                }
-                _ => unreachable!(),
-            },
-        };
-
-        s.buffer.resize(s.buffer.len() - byte_sent, 0);
-
-        return if s.buffer.is_empty() {
-            Poll::Ready(Ok(true))
-        } else {
-            Poll::Pending
-        };
-    }
-}
-
-#[derive(Debug)]
-pub struct StreamReader<T>
-where
-    T: io::Read,
-{
-    reader: io::BufReader<T>,
-    buffer: VecDeque<u8>,
-}
-
-impl<T> StreamReader<T>
-where
-    T: io::Read,
-{
-    pub fn new(stream: T) -> StreamReader<T> {
-        StreamReader {
+    pub fn new(stream: I) -> Self {
+        ReadWrapper {
             reader: io::BufReader::new(stream),
-            buffer: VecDeque::new(),
         }
     }
 }
-
-impl StreamReader<net::TcpStream> {
-    pub fn from_tcp(stream: &net::TcpStream) -> Result<StreamReader<net::TcpStream>, io::Error> {
+impl ReadWrapper<net::TcpStream> {
+    pub fn from_tcp(stream: &net::TcpStream) -> Result<Self, io::Error> {
         let stream = stream.try_clone()?;
         Ok(Self::new(stream))
     }
 }
 
-impl<T> AsyncRead for StreamReader<T>
+impl<I> AsyncRead for ReadWrapper<I>
 where
-    T: io::Read + std::marker::Unpin,
+    I: io::Read + marker::Unpin,
 {
     fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut task::Context<'_>,
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
-        // todo! add test
+    ) -> std::task::Poll<io::Result<usize>> {
         #[cfg(debug_assertions)]
-        assert_eq!(self.as_ref().buffer.len(), 0);
+        assert_ne!(buf.len(), 0);
         let s = self.get_mut();
         let byte_read = s.reader.read(buf)?;
-        return if byte_read == 0 {
-            Poll::Pending
-        } else {
-            Poll::Ready(Ok(byte_read))
-        };
+        Poll::Ready(Ok(byte_read))
     }
 }
 
-impl<T> Stream for StreamReader<T>
+pub struct WriteWrapper<I>
 where
-    T: io::Read + std::marker::Unpin,
+    I: io::Write,
 {
-    type Item = u8;
-    fn poll_next(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
-        let s = self.get_mut();
-        let buf = &mut [0_u8; BUFFER_SIZE];
+    writer: io::BufWriter<I>,
+}
 
-        if !s.buffer.is_empty() {
-            return Poll::Ready(s.buffer.pop_front());
+impl<I> WriteWrapper<I>
+where
+    I: io::Write,
+{
+    pub fn new(stream: I) -> Self {
+        WriteWrapper {
+            writer: io::BufWriter::new(stream),
         }
-
-        return match s.reader.read(buf) {
-            Ok(read_byte) => {
-                return if read_byte == 0 {
-                    Poll::Ready(None)
-                } else {
-                    let another = &mut VecDeque::from(buf[1..read_byte].to_vec());
-                    s.buffer.append(another);
-                    Poll::Ready(Some(buf[0]))
-                };
-            }
-            Err(err) => match err.kind() {
-                io::ErrorKind::NotFound
-                | io::ErrorKind::ConnectionRefused
-                | io::ErrorKind::ConnectionReset
-                | io::ErrorKind::BrokenPipe
-                | io::ErrorKind::UnexpectedEof => Poll::Ready(None),
-                _ => unreachable!(),
-            },
-        };
     }
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (0, None)
+    pub async fn inner(mut self) -> Result<I, io::Error> {
+        self.writer.flush()?;
+        Ok(self.writer.into_parts().0)
+    }
+}
+impl WriteWrapper<net::TcpStream> {
+    pub fn from_tcp(stream: &net::TcpStream) -> Result<Self, io::Error> {
+        let stream = stream.try_clone()?;
+        Ok(Self::new(stream))
+    }
+}
+
+impl<I> AsyncWrite for WriteWrapper<I>
+where
+    I: io::Write + marker::Unpin,
+{
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        #[cfg(debug_assertions)]
+        assert_ne!(buf.len(), 0);
+        let s = self.get_mut();
+        let byte_sent = s.writer.write(buf)?;
+        Poll::Ready(Ok(byte_sent))
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        let s = self.get_mut();
+        s.writer.flush()?;
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        // !
+        drop(self);
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -184,32 +111,27 @@ where
 mod test {
     use std::net;
 
+    use async_std::io::ReadExt;
     use futures::StreamExt;
 
     use super::*;
 
     #[async_std::test]
-    async fn tcp_read() {
-        // sending request to a non-standard http server, which reply "Hello World msg" instantly without sending of nothing.
-        let expect_result="HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n<!DOCTYPE html><html><head><title>Bye-bye baby bye-bye</title><style>body { background-color: #111 }h1 { font-size:4cm; text-align: center; color: black; text-shadow: 0 0 2mm red}</style></head><body><h1>Goodbye, world!</h1></body></html>\r\n".as_bytes();
-        let stream = net::TcpStream::connect("127.0.0.0:8000").unwrap();
-        let mut reader = StreamReader::new(stream);
-        let content = reader.collect::<Vec<u8>>().await;
-        assert_eq!(expect_result, content);
+    async fn tcp_write() {
+        // need test server
     }
 
     #[async_std::test]
-    async fn tcp_write() {
-        let content = "GET http://a.example.com/index.html HTTP/1.1\r\nHost: a.example.com\r\n\r\n"
-            .as_bytes();
+    async fn tcp_read() {
+        // sending request to a non-standard http server, which reply "Hello World msg" instantly without sending of nothing.
+        let expect_result="HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n<!DOCTYPE html><html><head><title>Bye-bye baby bye-bye</title><style>body { background-color: #111 }h1 { font-size:4cm; text-align: center; color: black; text-shadow: 0 0 2mm red}</style></head><body><h1>Some random content</h1></body></html>\r\n".as_bytes();
         let stream = net::TcpStream::connect("127.0.0.0:8000").unwrap();
-        let mut writer = StreamWriter::new(stream);
-        let a = writer.write(content.to_vec()).await;
-        // consider implmenting a regular http server
-    }
-
-    #[test]
-    fn playground() {
-        dbg!("bors".as_bytes());
+        let mut reader = ReadWrapper::new(stream);
+        let buf = &mut Vec::new();
+        reader.read_to_end(buf).await.unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(expect_result),
+            String::from_utf8_lossy(&buf)
+        );
     }
 }

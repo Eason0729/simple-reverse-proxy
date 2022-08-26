@@ -1,4 +1,4 @@
-use super::network::*;
+use super::{network::*, stream::ReadableStream};
 use futures::StreamExt;
 use std::{borrow::Cow, io, net, ops};
 
@@ -10,7 +10,7 @@ where
     T: io::Write + io::Read + std::marker::Unpin,
 {
     buffer: Vec<u8>,
-    reader: StreamReader<T>,
+    reader: ReadableStream<T>,
 }
 
 impl Block<net::TcpStream> {
@@ -27,7 +27,7 @@ where
     pub fn new(stream: T) -> Block<T> {
         Block {
             buffer: Vec::with_capacity(BUFFER_SIZE),
-            reader: StreamReader::new(stream),
+            reader: ReadableStream::new(stream),
         }
     }
     pub async fn next_line(&mut self) -> Cow<[u8]> {
@@ -67,7 +67,7 @@ where
     pub fn buffer_size(&self) -> usize {
         self.buffer.len()
     }
-    pub fn inner(self) -> StreamReader<T> {
+    pub fn inner(self) -> ReadableStream<T> {
         self.reader
     }
 }
