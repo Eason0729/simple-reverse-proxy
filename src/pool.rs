@@ -21,7 +21,7 @@ where
     pub fn new<F>(size: usize, execution: &'static F) -> Pool<T>
     where
         T: Send + 'static,
-        F: Fn(T) + Send + Sync
+        F: Fn(T) + Send + Sync,
     {
         let singal = Arc::new(AtomicBool::new(false));
         let channel = Arc::new(((Mutex::new(VecDeque::new())), Condvar::new()));

@@ -1,10 +1,8 @@
 use std::{
     borrow::Cow,
-    io::{self, Read},
+    io::{self},
     marker::PhantomData,
     net,
-    rc::Rc,
-    time::Duration,
 };
 
 use crate::poll::{block::*, network::StreamReader};
@@ -42,7 +40,7 @@ where
             stage: PhantomData,
         })
     }
-    pub fn finalize(mut self) -> (Vec<u8>, StreamReader<C>) {
+    pub fn into_parts(mut self) -> (Vec<u8>, StreamReader<C>) {
         let in_buffer = self.block.inner_buffer().to_vec(); // untested
         let reader = self.block.inner();
         (in_buffer, reader)

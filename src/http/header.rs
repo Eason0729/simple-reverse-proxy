@@ -1,11 +1,10 @@
 use std::borrow::Cow;
-use std::{cmp, mem, str};
+use std::{cmp, mem};
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
     TooLargeValue,
     MisMatchedValue,
-    InvaildValue,
 }
 
 #[derive(Debug, PartialEq)]
@@ -84,7 +83,7 @@ impl TryFrom<Vec<u8>> for Header {
             b"Host" => Self::Host(value),
             b"Connection" => Self::Connection(value.try_into()?),
             b"Keep-Alive" => Self::KeepAlive(parse_numeric(value)?),
-            _ => Self::Unknown(value.to_vec()),
+            _ => Self::Unknown(input),
         })
     }
 }

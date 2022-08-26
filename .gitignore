@@ -3,3 +3,5 @@
 /.vscode
 /config.properties
 /.env
+/flamegraph.svg
+/perf.data

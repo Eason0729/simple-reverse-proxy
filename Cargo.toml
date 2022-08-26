@@ -17,8 +17,7 @@ libc = "0.2"
 
 [dependencies]
 futures = "*"
-# thiserror = "1.0"
 
-[dependencies.async-std]
+[dev-dependencies.async-std]
 version = "1.2"
 features = ["attributes"]

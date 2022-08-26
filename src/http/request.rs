@@ -5,6 +5,7 @@ use crate::poll::network::{StreamReader, StreamWriter};
 
 use super::header;
 use super::{http::*, startline};
+use std::cmp;
 use std::{net, time::Duration};
 
 const CHUNK_SIZE: usize = 1024;
@@ -35,17 +36,17 @@ macro_rules! recover {
 pub struct Request<S> {
     model: Model<net::TcpStream, S>,
     keep_alive: usize,
-    content_lenght: usize,
+    content_length: usize,
     host: Vec<u8>,
 }
 
 impl Request<stage::StartLine> {
-    pub fn new(stream: &net::TcpStream) -> Result<Request<stage::StartLine>, std::io::Error> {
-        let model = Model::from_tcp(stream)?;
+    pub fn new(stream: &net::TcpStream) -> Result<Request<stage::StartLine>, Error> {
+        let model = Model::from_tcp(stream).unwrap();
         Ok(Request {
             model,
             keep_alive: 2,
-            content_lenght: 0,
+            content_length: 0,
             host: Vec::new(),
         })
     }
@@ -56,9 +57,12 @@ impl Request<stage::StartLine> {
 
         while let Some(header) = recover!(model.next().await, Error::ClientIncompatible) {
             match header {
-                header::Header::ContentLength(x) => self.content_lenght = x,
+                header::Header::ContentLength(x) => self.content_length = x,
                 header::Header::Host(x) => self.host = x,
-                header::Header::Unknown(x) => println!("{}", String::from_utf8_lossy(&x)),
+                header::Header::Unknown(x) => {
+                    #[cfg(debug_assertions)]
+                    println!("{}", String::from_utf8_lossy(&x));
+                },
                 header::Header::TransferEncoding => {
                     return Err(Error::BadProtocal);
                 }
@@ -75,7 +79,7 @@ impl Request<stage::StartLine> {
         let request = Request {
             model: model.skip(),
             keep_alive: self.keep_alive,
-            content_lenght: self.content_lenght,
+            content_length: self.content_length,
             host: self.host,
         };
 
@@ -86,10 +90,12 @@ impl Request<stage::StartLine> {
 impl Request<stage::MessageBody> {
     pub async fn send(
         mut self,
-        config: config::Config,
-        addr: net::SocketAddr,
-    ) -> Result<net::TcpStream, Error> {
-        let (block, reader) = self.model.finalize();
+        config: &config::Config,
+        // addr: net::SocketAddr,
+    ) -> Result<StreamWriter<net::TcpStream>, Error> {
+        let (block, mut reader) = self.model.into_parts();
+
+        let reader = &mut reader;
 
         let addr = match config.domain_mapping.get(&self.host) {
             Some(x) => x,
@@ -103,11 +109,19 @@ impl Request<stage::MessageBody> {
 
         recover!(writer.write(block).await, Error::ServerIncompatible);
 
-        let iter = reader.take(self.content_lenght).chunks(CHUNK_SIZE);
-        for chunk in iter {
+        loop {
+            if self.content_length == 0 {
+                break;
+            }
+            let plan_to_read = cmp::min(self.content_length, CHUNK_SIZE);
+            let chunk: Vec<u8> = reader.take(plan_to_read).collect().await;
+
+            self.content_length -= plan_to_read;
+
             recover!(writer.write(chunk).await, Error::ServerIncompatible);
         }
-        Ok(upstream)
+
+        Ok(writer)
     }
 }
 

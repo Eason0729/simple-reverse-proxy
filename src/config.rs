@@ -40,11 +40,4 @@ impl Config {
             domain_mapping: mapping,
         }
     }
-    pub fn empty() -> Config {
-        let mut mapping = HashMap::new();
-
-        Config {
-            domain_mapping: mapping,
-        }
-    }
 }

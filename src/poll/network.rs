@@ -34,7 +34,15 @@ where
     pub async fn write(&mut self, content: Vec<u8>) -> Result<(), std::io::Error> {
         let mut content = VecDeque::from(content);
         self.buffer.append(&mut content);
-        self.await
+        return if self.await? {
+            Ok(())
+        } else {
+            Err(std::io::ErrorKind::BrokenPipe.into())
+        };
+    }
+    pub async fn inner(mut self) -> Result<T, io::Error> {
+        self.writer.flush()?;
+        Ok(self.writer.into_parts().0)
     }
 }
 
@@ -54,27 +62,32 @@ impl<T> Future for StreamWriter<T>
 where
     T: io::Write + std::marker::Unpin,
 {
-    type Output = Result<(), io::Error>;
+    type Output = Result<bool, io::Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         let s = self.get_mut();
-        let data = s.buffer.make_contiguous();
+        // temporary test
+        let mut data = s.buffer.clone();
+        let data=data.make_contiguous();
+        
         let byte_sent = match s.writer.write(data) {
             Ok(x) => x,
             Err(err) => match err.kind() {
                 io::ErrorKind::ConnectionRefused
                 | io::ErrorKind::ConnectionReset
                 | io::ErrorKind::Interrupted => {
-                    return Poll::Pending;
+                    return Poll::Ready(Ok(false));
                 }
                 _ => unreachable!(),
             },
         };
 
-        s.buffer.resize(byte_sent, 0);
+        drop(data);
+
+        s.buffer.resize(s.buffer.len()-byte_sent, 0);
 
         return if s.buffer.is_empty() {
-            Poll::Ready(Ok(()))
+            Poll::Ready(Ok(true))
         } else {
             Poll::Pending
         };
@@ -165,8 +178,9 @@ mod test {
         let content = reader.collect::<Vec<u8>>().await;
         assert_eq!(expect_result, content);
     }
-    #[async_std::test]
-    async fn tcp_write() {
+
+    #[test]
+    fn tcp_write() {
         let content = "GET http://a.example.com/index.html HTTP/1.1\r\nHost: a.example.com\r\n\r\n"
             .as_bytes();
         let stream = net::TcpStream::connect("127.0.0.0:8000").unwrap();
@@ -174,6 +188,7 @@ mod test {
         let a = writer.write(content.to_vec());
         // consider implmenting a regular http server
     }
+
     #[test]
     fn playground() {
         dbg!("bors".as_bytes());
