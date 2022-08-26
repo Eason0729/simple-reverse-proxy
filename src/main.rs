@@ -5,14 +5,10 @@ mod pool;
 
 use config::*;
 use http::prelude::*;
+use pool::*;
 use std::env::var;
 use std::net;
 use std::sync::Arc;
-use pool::*;
-
-struct State {
-    config: Config,
-}
 
 fn main() {
     let server_socket_addr = var("ADDR").unwrap_or("0.0.0.0:80".to_string());
@@ -30,7 +26,7 @@ fn main() {
     );
 
     let config = Arc::new(config::Config::new());
-    let mut pool = Pool::new((process_thread).try_into().unwrap(), &execution);
+    let mut pool = Pool::new((process_thread).try_into().unwrap(), &future_handler);
 
     for stream in listener.incoming() {
         let stream = stream.unwrap();
@@ -38,7 +34,7 @@ fn main() {
     }
 }
 
-fn execution(future:impl futures::Future<Output = ()>){
+fn future_handler(future: impl futures::Future<Output = ()>) {
     futures::executor::block_on(future);
 }
 
@@ -68,5 +64,5 @@ async fn handle_request(config: (Arc<config::Config>, net::TcpStream)) {
 
     let server_stream = log_err!(server_stream.map_err(|_| Error::ServerIncompatible));
 
-    reverse_proxy(server_stream, client_stream).await;
+    log_err!(reverse_proxy(server_stream, client_stream).await);
 }

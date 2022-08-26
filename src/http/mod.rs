@@ -7,4 +7,5 @@ pub mod prelude {
     pub use super::header;
     pub use super::request::*;
     pub use super::startline;
+    pub use reverse_proxy::reverse_proxy;
 }

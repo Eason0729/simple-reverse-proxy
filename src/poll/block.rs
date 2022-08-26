@@ -26,7 +26,7 @@ where
 {
     pub fn new(stream: T) -> Block<T> {
         Block {
-            buffer: Vec::new(),
+            buffer: Vec::with_capacity(BUFFER_SIZE),
             reader: StreamReader::new(stream),
         }
     }

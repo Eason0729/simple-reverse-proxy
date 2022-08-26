@@ -6,6 +6,7 @@ use crate::poll::network::{StreamReader, StreamWriter};
 use super::header;
 use super::{http::*, startline};
 use std::cmp;
+use std::collections::VecDeque;
 use std::{net, time::Duration};
 
 const CHUNK_SIZE: usize = 1024;
@@ -62,7 +63,7 @@ impl Request<stage::StartLine> {
                 header::Header::Unknown(x) => {
                     #[cfg(debug_assertions)]
                     println!("{}", String::from_utf8_lossy(&x));
-                },
+                }
                 header::Header::TransferEncoding => {
                     return Err(Error::BadProtocal);
                 }
@@ -125,21 +126,39 @@ impl Request<stage::MessageBody> {
     }
 }
 
-pub async fn reverse_proxy(client: net::TcpStream, server: net::TcpStream) {
-    let mut writer = StreamWriter::new(server);
-    let mut reader = StreamReader::new(client);
+pub mod reverse_proxy {
+    use std::io;
 
-    loop {
-        let item = reader.next().await;
-        match item {
-            Some(x) => {
-                if writer.write([x].to_vec()).await.is_err() {
-                    break;
-                };
-            }
-            None => {
-                break;
-            }
-        };
+    use futures::AsyncReadExt;
+
+    use super::*;
+    pub async fn reverse_proxy(
+        client: net::TcpStream,
+        server: net::TcpStream,
+    ) -> Result<(), Error> {
+        let mut writer = StreamWriter::new(server);
+        let mut reader = StreamReader::new(client);
+
+        let buffer = &mut [0_u8; 4096].to_vec();
+        loop {
+            let byte_read = match reader.read(buffer).await {
+                Ok(x) => x,
+                Err(err) => match err.kind() {
+                    io::ErrorKind::NotFound
+                    | io::ErrorKind::ConnectionRefused
+                    | io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::BrokenPipe
+                    | io::ErrorKind::UnexpectedEof => {
+                        return Ok(());
+                    }
+                    _ => unreachable!(),
+                },
+            };
+
+            writer
+                .write(buffer[0..byte_read].to_vec())
+                .await
+                .map_err(|_| Error::ClientIncompatible)?;
+        }
     }
 }

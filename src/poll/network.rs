@@ -1,8 +1,9 @@
 use std::collections::VecDeque;
-use std::net;
+use std::{cmp, net};
 
 use futures::task::Poll;
-use futures::{task, AsyncWrite};
+use futures::AsyncReadExt;
+use futures::{task, AsyncRead, AsyncWrite};
 use futures::{Future, Stream};
 use std::io::{self, Read, Write};
 use std::pin::Pin;
@@ -66,15 +67,14 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
         let s = self.get_mut();
-        // temporary test
-        let mut data = s.buffer.clone();
-        let data=data.make_contiguous();
-        
+        s.buffer.make_contiguous();
+        let data = s.buffer.as_slices().0;
         let byte_sent = match s.writer.write(data) {
             Ok(x) => x,
             Err(err) => match err.kind() {
                 io::ErrorKind::ConnectionRefused
                 | io::ErrorKind::ConnectionReset
+                | io::ErrorKind::BrokenPipe
                 | io::ErrorKind::Interrupted => {
                     return Poll::Ready(Ok(false));
                 }
@@ -82,9 +82,7 @@ where
             },
         };
 
-        drop(data);
-
-        s.buffer.resize(s.buffer.len()-byte_sent, 0);
+        s.buffer.resize(s.buffer.len() - byte_sent, 0);
 
         return if s.buffer.is_empty() {
             Poll::Ready(Ok(true))
@@ -122,6 +120,28 @@ impl StreamReader<net::TcpStream> {
     }
 }
 
+impl<T> AsyncRead for StreamReader<T>
+where
+    T: io::Read + std::marker::Unpin,
+{
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        // todo! add test
+        #[cfg(debug_assertions)]
+        assert_eq!(self.as_ref().buffer.len(), 0);
+        let s = self.get_mut();
+        let byte_read = s.reader.read(buf)?;
+        return if byte_read == 0 {
+            Poll::Pending
+        } else {
+            Poll::Ready(Ok(byte_read))
+        };
+    }
+}
+
 impl<T> Stream for StreamReader<T>
 where
     T: io::Read + std::marker::Unpin,
@@ -140,11 +160,10 @@ where
                 return if read_byte == 0 {
                     Poll::Ready(None)
                 } else {
-                    buf[1..read_byte].iter().for_each(move |x| {
-                        s.buffer.push_back(*x);
-                    });
+                    let another = &mut VecDeque::from(buf[1..read_byte].to_vec());
+                    s.buffer.append(another);
                     Poll::Ready(Some(buf[0]))
-                }
+                };
             }
             Err(err) => match err.kind() {
                 io::ErrorKind::NotFound
@@ -179,13 +198,13 @@ mod test {
         assert_eq!(expect_result, content);
     }
 
-    #[test]
-    fn tcp_write() {
+    #[async_std::test]
+    async fn tcp_write() {
         let content = "GET http://a.example.com/index.html HTTP/1.1\r\nHost: a.example.com\r\n\r\n"
             .as_bytes();
         let stream = net::TcpStream::connect("127.0.0.0:8000").unwrap();
         let mut writer = StreamWriter::new(stream);
-        let a = writer.write(content.to_vec());
+        let a = writer.write(content.to_vec()).await;
         // consider implmenting a regular http server
     }
 
