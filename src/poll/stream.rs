@@ -26,6 +26,15 @@ where
             buffer: VecDeque::with_capacity(CHUNK_SIZE),
         }
     }
+    pub fn into_parts(mut self)->(I,Vec<u8>){
+        todo!()
+        // let buffer_leftover=self.buffer.make_contiguous();
+        // let reader_leftover=self.reader.buffer();
+
+        // (self.reader.into_inner(),reader_leftover)
+        // todo!()
+    }
+
 }
 impl ReadableStream<net::TcpStream> {
     pub fn from_tcp(stream: &net::TcpStream) -> Result<Self, io::Error> {

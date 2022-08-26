@@ -34,10 +34,6 @@ where
         self.read_until([13, 10].to_vec()).await
     }
     pub async fn read_until(&mut self, split: Vec<u8>) -> Cow<[u8]>
-//  // where
-    //     K: Sized + ops::Index<usize>,
-    //     for <'a> &'a K: IntoIterator,
-    //     <K as ops::Index<usize>>::Output: Copy + PartialEq<u8> +Into<u8>,
     {
         let start = self.buffer.len();
         let mut end = self.buffer.len();
