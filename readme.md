@@ -22,7 +22,7 @@ sub2.example.com=mybackend.example.com:80
 3. Set environment variable
 
 ```env
-SR_ADDR=0.0.0.0:80
+ADDR=0.0.0.0:80
 THREAD=4
 ```
 
