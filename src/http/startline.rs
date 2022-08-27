@@ -9,11 +9,11 @@ pub enum HttpVersion {
     Unknown,
 }
 
-impl TryFrom<Vec<u8>> for HttpVersion {
+impl TryFrom<&[u8]> for HttpVersion {
     type Error = Error;
-    fn try_from(input: Vec<u8>) -> Result<Self, Error> {
+    fn try_from(input: &[u8]) -> Result<Self, Error> {
         // dbg!(str::from_utf8(&input.clone()).unwrap());
-        match input.as_slice() {
+        match input {
             b"HTTP" => Ok(HttpVersion::Unknown),
             b"HTTP/0.9" => Ok(HttpVersion::HTTP0),
             b"HTTP/1.0" => Ok(HttpVersion::HTTP1),
@@ -53,11 +53,11 @@ pub enum Method {
     PATCH,
 }
 
-impl TryFrom<Vec<u8>> for Method {
+impl TryFrom<&[u8]> for Method {
     type Error = Error;
-    fn try_from(input: Vec<u8>) -> Result<Self, Error> {
+    fn try_from(input: &[u8]) -> Result<Self, Error> {
         // dbg!(str::from_utf8(&input.clone()).unwrap());
-        match input.as_slice() {
+        match input {
             b"GET" => Ok(Method::GET),
             b"POST" => Ok(Method::POST),
             b"HEAD" => Ok(Method::HEAD),
@@ -103,16 +103,16 @@ pub enum Error {
     MisMatchedValue,
 }
 
-impl TryFrom<Vec<u8>> for StartLine {
+impl TryFrom<&[u8]> for StartLine {
     type Error = Error;
-    fn try_from(input: Vec<u8>) -> Result<Self, Error> {
+    fn try_from(input: &[u8]) -> Result<Self, Error> {
         #[cfg(debug_assertions)]
         assert_ne!(input.last().unwrap(), &b"\n"[0]);
 
         let mut iter = input.split(|&x| x == 32);
-        let method = iter.next().ok_or(Error::BadFormat)?.to_vec();
-        let path = iter.next().ok_or(Error::BadFormat)?.to_vec();
-        let version = iter.next().ok_or(Error::BadFormat)?.to_vec();
+        let method = iter.next().ok_or(Error::BadFormat)?;
+        let path = iter.next().ok_or(Error::BadFormat)?;
+        let version = iter.next().ok_or(Error::BadFormat)?;
         let method = method.try_into()?;
 
         let version = version.try_into()?;
@@ -120,7 +120,7 @@ impl TryFrom<Vec<u8>> for StartLine {
         Ok(StartLine {
             method,
             version,
-            path,
+            path: path.to_vec(),
         })
     }
 }
@@ -128,8 +128,12 @@ impl TryFrom<Vec<u8>> for StartLine {
 impl<'a> TryFrom<Cow<'a, [u8]>> for StartLine {
     type Error = Error;
 
-    fn try_from(input: Cow<[u8]>) -> Result<Self, Self::Error> {
-        Ok(input.try_into()?)
+    fn try_from(input: Cow<'a, [u8]>) -> Result<Self, Self::Error> {
+        // it were `Ok(input.clone().try_into()?)`, but core dumped
+        // thread '<unknown>' has overflowed its stack
+        // fatal runtime error: stack overflow
+        // [1]    120000 abort (core dumped)  cargo run
+        Ok(input.as_ref().try_into()?)
     }
 }
 
@@ -138,9 +142,9 @@ mod test {
     use super::*;
     #[test]
     fn start_line() {
-        let source = b"GET http://a.example.com/index.html HTTP/1.1".to_vec();
+        let source = b"GET http://a.example.com/index.html HTTP/1.1";
         // let source = Cow::from(source);
-        let result: StartLine = source.try_into().unwrap();
+        let result: StartLine = source.as_ref().try_into().unwrap();
 
         let expect_result = StartLine {
             method: Method::GET,

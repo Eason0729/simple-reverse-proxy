@@ -2,10 +2,9 @@ use std::{
     borrow::Cow,
     io::{self},
     marker::PhantomData,
-    net,
 };
 
-use crate::poll::{block::*, stream::ReadableStream};
+use crate::poll::block::*;
 
 use super::{header, startline};
 
@@ -15,9 +14,8 @@ pub mod stage {
     pub struct MessageBody;
 }
 
-fn trim_ending(input: Cow<[u8]>) -> Vec<u8> {
-    let input = input.as_ref();
-    input[0..input.len() - 2].to_vec()
+fn trim_ending(input: Cow<[u8]>) -> Cow<[u8]> {
+    Cow::from(input.as_ref()[0..input.len() - 2].to_vec())
 }
 
 /// Implementation of http standard (stateless)
@@ -34,27 +32,14 @@ where
     C: io::Write + io::Read + std::marker::Unpin,
 {
     pub fn new(stream: C) -> Model<C, S> {
-        let mut block = Block::new(stream);
+        let block = Block::new(stream);
         Model {
             block,
             stage: PhantomData,
         }
     }
-    pub fn into_parts(mut self) -> (C, Vec<u8>, Vec<u8>) {
+    pub fn into_parts(self) -> (C, Vec<u8>, Vec<u8>) {
         self.block.into_parts()
-    }
-}
-
-impl Model<net::TcpStream, stage::StartLine> {
-    pub fn from_tcp(
-        stream: &net::TcpStream,
-    ) -> Result<Model<net::TcpStream, stage::StartLine>, std::io::Error> {
-        // let mut block = Block::from_tcp(stream)?;
-        // Ok(Model {
-        //     block,
-        //     stage: PhantomData,
-        // })
-        todo!()
     }
 }
 
@@ -65,7 +50,8 @@ where
     pub async fn next(&mut self) -> Result<Option<startline::StartLine>, startline::Error> {
         if 0 == self.block.buffer_size() {
             let buf = self.block.next_line().await;
-            let start_line = trim_ending(buf).try_into()?;
+            let start_line = trim_ending(buf);
+            let start_line = start_line.try_into()?;
             Ok(Some(start_line))
         } else {
             Ok(None)
@@ -90,7 +76,7 @@ where
         if buf.len() <= 2 {
             Ok(None)
         } else {
-            let header = trim_ending(buf).try_into()?;
+            let header = trim_ending(buf).to_owned().try_into()?;
             Ok(Some(header))
         }
     }
@@ -107,6 +93,7 @@ mod test {
     use std::fs;
 
     use super::*;
+    use crate::config::hash;
 
     #[async_std::test]
     async fn startline_parsing() {
@@ -133,7 +120,7 @@ mod test {
         let mut model = Model::<fs::File, stage::HeaderField>::new(stream);
 
         let result1 = model.next().await.unwrap().unwrap();
-        assert_eq!(result1, header::Header::Host(b"a.example.com".to_vec()));
+        assert_eq!(result1, header::Header::Host(hash(b"a.example.com")));
 
         let result2 = model.next().await.unwrap();
         assert_eq!(result2, None);

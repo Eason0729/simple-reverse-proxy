@@ -1,14 +1,11 @@
-use futures::{AsyncWriteExt, StreamExt};
+use futures::AsyncWriteExt;
 
-use super::header;
-use super::{http::*, startline};
+use super::{header, http::*};
 use crate::config;
 use crate::poll::network::{ReadWrapper, WriteWrapper};
 use futures::AsyncReadExt;
-use std::collections::VecDeque;
-use std::io::Read;
+use std::net;
 use std::{cmp, io, marker};
-use std::{net, time::Duration};
 
 const CHUNK_SIZE: usize = 8192;
 
@@ -42,7 +39,7 @@ where
     model: Model<I, S>,
     keep_alive: usize,
     content_length: usize,
-    host: Vec<u8>,
+    host: u64,
 }
 
 impl<I> Request<I, stage::StartLine>
@@ -55,43 +52,45 @@ where
             model,
             keep_alive: 2,
             content_length: 0,
-            host: Vec::new(),
+            host: 0,
         })
     }
 
     pub async fn parse(mut self) -> Result<Request<I, stage::MessageBody>, Error> {
-        let startline = recover!(self.model.next().await, Error::ClientIncompatible).unwrap();
+        let _startline = recover!(self.model.next().await, Error::ClientIncompatible).unwrap();
         let mut model = self.model.skip();
 
-        while let Some(header) = recover!(model.next().await, Error::ClientIncompatible) {
+        loop {
+            let header = recover!(model.next().await, Error::ClientIncompatible);
             match header {
-                header::Header::ContentLength(x) => self.content_length = x,
-                header::Header::Host(x) => self.host = x,
-                header::Header::Unknown(x) => {
-                    #[cfg(debug_assertions)]
-                    println!("{}", String::from_utf8_lossy(&x));
-                }
-                header::Header::TransferEncoding => {
-                    return Err(Error::BadProtocal);
-                }
-                header::Header::Connection(x) => {
-                    if x == header::ConnectionState::Upgrade {
-                        self.keep_alive = 3600 * 24;
+                None => break,
+                Some(header) => match header {
+                    header::Header::ContentLength(x) => self.content_length = x,
+                    header::Header::Host(x) => self.host = x,
+                    header::Header::Unknown(x) => {
+                        #[cfg(debug_assertions)]
+                        println!("{}", String::from_utf8_lossy(&x));
                     }
-                }
-                header::Header::KeepAlive(x) => {
-                    self.keep_alive = x;
-                }
+                    header::Header::TransferEncoding => {
+                        return Err(Error::BadProtocal);
+                    }
+                    header::Header::Connection(x) => {
+                        if x == header::ConnectionState::Upgrade {
+                            self.keep_alive = 3600 * 24;
+                        }
+                    }
+                    header::Header::KeepAlive(x) => {
+                        self.keep_alive = x;
+                    }
+                },
             }
         }
-        let request = Request {
+        Ok(Request {
             model: model.skip(),
             keep_alive: self.keep_alive,
             content_length: self.content_length,
             host: self.host,
-        };
-
-        Ok(request)
+        })
     }
 }
 
@@ -188,7 +187,7 @@ pub mod reverse_proxy {
                 break;
             }
             writer
-                .write(&buffer[0..byte_read].to_vec())
+                .write(&buffer[0..byte_read])
                 .await
                 .map_err(|_| Error::ClientIncompatible)?;
         }

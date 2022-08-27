@@ -31,7 +31,7 @@ where
 {
     fn poll_read(
         self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
+        _cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> std::task::Poll<io::Result<usize>> {
         #[cfg(debug_assertions)]
@@ -61,12 +61,6 @@ where
         Ok(self.writer)
     }
 }
-impl WriteWrapper<net::TcpStream> {
-    pub fn from_tcp(stream: &net::TcpStream) -> Result<Self, io::Error> {
-        let stream = stream.try_clone()?;
-        Ok(Self::new(stream))
-    }
-}
 
 impl<I> AsyncWrite for WriteWrapper<I>
 where
@@ -74,7 +68,7 @@ where
 {
     fn poll_write(
         self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
+        _cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<io::Result<usize>> {
         if buf.len() == 0 {
@@ -88,7 +82,7 @@ where
 
     fn poll_flush(
         self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
+        _cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<io::Result<()>> {
         let s = self.get_mut();
         s.writer.flush()?;
@@ -97,7 +91,7 @@ where
 
     fn poll_close(
         self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
+        _cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<io::Result<()>> {
         // !
         drop(self);
@@ -110,7 +104,6 @@ mod test {
     use std::net;
 
     use async_std::io::ReadExt;
-    use futures::StreamExt;
 
     use super::*;
 

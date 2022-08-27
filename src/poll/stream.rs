@@ -7,8 +7,6 @@ use std::{
     marker,
 };
 
-use super::network::ReadWrapper;
-
 const CHUNK_SIZE: usize = 8192;
 pub struct ReadableStream<I>
 where
@@ -67,7 +65,7 @@ where
 
     fn poll_next(
         self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
+        _cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Self::Item>> {
         let s = self.get_mut();
         if !s.buffer.is_empty() {

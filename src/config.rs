@@ -1,12 +1,14 @@
+use std::collections::hash_map::DefaultHasher;
+use std::collections::BTreeMap;
+use std::hash::{Hash, Hasher};
 use std::{
-    collections::HashMap,
     fs::File,
     io::{self, BufRead},
     net::{SocketAddr, ToSocketAddrs},
 };
 
 pub struct Config {
-    pub domain_mapping: HashMap<Vec<u8>, SocketAddr>,
+    pub domain_mapping: BTreeMap<u64, SocketAddr>,
 }
 
 impl Config {
@@ -14,7 +16,7 @@ impl Config {
         let file = File::open("./config.properties").unwrap();
         let reader = io::BufReader::new(file);
 
-        let mut mapping = HashMap::new();
+        let mut mapping = BTreeMap::new();
 
         let comment_chars = ['#', '!'];
 
@@ -33,11 +35,20 @@ impl Config {
 
             let socket_addr = socket_address.to_socket_addrs().unwrap().next().unwrap();
 
-            mapping.insert(domain.as_bytes().to_vec(), socket_addr);
+            mapping.insert(hash(domain.as_bytes()), socket_addr);
         }
 
         Config {
             domain_mapping: mapping,
         }
     }
+}
+
+pub fn hash<T>(obj: T) -> u64
+where
+    T: Hash,
+{
+    let mut hasher = DefaultHasher::new();
+    obj.hash(&mut hasher);
+    hasher.finish()
 }

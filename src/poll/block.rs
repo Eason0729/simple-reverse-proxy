@@ -1,4 +1,4 @@
-use super::{network::*, stream::ReadableStream};
+use super::stream::ReadableStream;
 use futures::StreamExt;
 use std::{borrow::Cow, io, net, ops};
 
@@ -34,9 +34,9 @@ where
         }
     }
     pub async fn next_line(&mut self) -> Cow<[u8]> {
-        self.read_until([13, 10].to_vec()).await
+        self.read_until(&[13, 10]).await
     }
-    pub async fn read_until(&mut self, split: Vec<u8>) -> Cow<[u8]> {
+    pub async fn read_until(&mut self, split: &[u8]) -> Cow<[u8]> {
         let start = self.buffer.len();
         let mut end = self.buffer.len();
         let mut split_iter = 0;
@@ -68,7 +68,7 @@ where
     // pub fn inner(self) -> ReadableStream<T> {
     //     self.reader
     // }
-    pub fn into_parts(mut self) -> (T, Vec<u8>, Vec<u8>) {
+    pub fn into_parts(self) -> (T, Vec<u8>, Vec<u8>) {
         let (reader, unread_buffer) = self.reader.into_parts();
         let read_buffer = self.buffer;
 
@@ -88,8 +88,8 @@ mod test {
 
         let mut block = Block::new(file);
 
-        let line1 = block.read_until(b"\r\n".to_vec()).await.into_owned();
-        let line2 = block.read_until(b"\r\n".to_vec()).await.into_owned();
+        let line1 = block.read_until(b"\r\n").await.into_owned();
+        let line2 = block.read_until(b"\r\n").await.into_owned();
         assert_eq!(line1, b"HTTP/1.1 400 Bad Request\r\n");
         assert_eq!(line2, b"Server: nginx\r\n");
     }
