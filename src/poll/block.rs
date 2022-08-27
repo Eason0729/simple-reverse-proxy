@@ -7,22 +7,25 @@ const READ_UNTIL_LIMIT: usize = 512;
 
 pub struct Block<T>
 where
-    T: io::Write + io::Read + std::marker::Unpin,
+    T: io::Read + std::marker::Unpin,
 {
     buffer: Vec<u8>,
     reader: ReadableStream<T>,
 }
 
-impl Block<net::TcpStream> {
-    pub fn from_tcp(stream: &net::TcpStream) -> Result<Block<net::TcpStream>, io::Error> {
+impl Block<io::BufReader<net::TcpStream>> {
+    pub fn from_buf_tcp(
+        stream: &net::TcpStream,
+    ) -> Result<Block<io::BufReader<net::TcpStream>>, io::Error> {
         let stream = stream.try_clone()?;
-        Ok(Self::new(stream))
+        let reader = io::BufReader::new(stream);
+        Ok(Self::new(reader))
     }
 }
 
 impl<T> Block<T>
 where
-    T: io::Write + io::Read + std::marker::Unpin,
+    T: io::Read + std::marker::Unpin,
 {
     pub fn new(stream: T) -> Block<T> {
         Block {
@@ -33,8 +36,7 @@ where
     pub async fn next_line(&mut self) -> Cow<[u8]> {
         self.read_until([13, 10].to_vec()).await
     }
-    pub async fn read_until(&mut self, split: Vec<u8>) -> Cow<[u8]>
-    {
+    pub async fn read_until(&mut self, split: Vec<u8>) -> Cow<[u8]> {
         let start = self.buffer.len();
         let mut end = self.buffer.len();
         let mut split_iter = 0;
@@ -57,14 +59,20 @@ where
         }
         Cow::from(Cow::from(&self.buffer[start..end]))
     }
-    pub fn inner_buffer(&mut self) -> Cow<[u8]> {
-        Cow::from(self.buffer.as_slice())
-    }
+    // pub fn inner_buffer(&mut self) -> Cow<[u8]> {
+    //     Cow::from(self.buffer.as_slice())
+    // }
     pub fn buffer_size(&self) -> usize {
         self.buffer.len()
     }
-    pub fn inner(self) -> ReadableStream<T> {
-        self.reader
+    // pub fn inner(self) -> ReadableStream<T> {
+    //     self.reader
+    // }
+    pub fn into_parts(mut self) -> (T, Vec<u8>, Vec<u8>) {
+        let (reader, unread_buffer) = self.reader.into_parts();
+        let read_buffer = self.buffer;
+
+        (reader, read_buffer, unread_buffer)
     }
 }
 

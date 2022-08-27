@@ -33,17 +33,15 @@ impl<C, S> Model<C, S>
 where
     C: io::Write + io::Read + std::marker::Unpin,
 {
-    pub fn new(stream: C) -> Result<Model<C, S>, std::io::Error> {
+    pub fn new(stream: C) -> Model<C, S> {
         let mut block = Block::new(stream);
-        Ok(Model {
+        Model {
             block,
             stage: PhantomData,
-        })
+        }
     }
-    pub fn into_parts(mut self) -> (Vec<u8>, ReadableStream<C>) {
-        let in_buffer = self.block.inner_buffer().to_vec(); // untested
-        let reader = self.block.inner();
-        (in_buffer, reader)
+    pub fn into_parts(mut self) -> (C, Vec<u8>, Vec<u8>) {
+        self.block.into_parts()
     }
 }
 
@@ -51,11 +49,12 @@ impl Model<net::TcpStream, stage::StartLine> {
     pub fn from_tcp(
         stream: &net::TcpStream,
     ) -> Result<Model<net::TcpStream, stage::StartLine>, std::io::Error> {
-        let mut block = Block::from_tcp(stream)?;
-        Ok(Model {
-            block,
-            stage: PhantomData,
-        })
+        // let mut block = Block::from_tcp(stream)?;
+        // Ok(Model {
+        //     block,
+        //     stage: PhantomData,
+        // })
+        todo!()
     }
 }
 
@@ -112,7 +111,7 @@ mod test {
     #[async_std::test]
     async fn startline_parsing() {
         let stream = fs::File::open("test/startline").unwrap();
-        let mut model = Model::<fs::File, stage::StartLine>::new(stream).unwrap();
+        let mut model = Model::<fs::File, stage::StartLine>::new(stream);
 
         let result1 = model.next().await.unwrap().unwrap();
         assert_eq!(
@@ -131,7 +130,7 @@ mod test {
     #[async_std::test]
     async fn headerfield_parsing() {
         let stream = fs::File::open("test/headerfield").unwrap();
-        let mut model = Model::<fs::File, stage::HeaderField>::new(stream).unwrap();
+        let mut model = Model::<fs::File, stage::HeaderField>::new(stream);
 
         let result1 = model.next().await.unwrap().unwrap();
         assert_eq!(result1, header::Header::Host(b"a.example.com".to_vec()));

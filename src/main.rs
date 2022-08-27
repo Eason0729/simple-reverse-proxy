@@ -60,9 +60,7 @@ async fn handle_request(config: (Arc<config::Config>, net::TcpStream)) {
 
     let request = log_err!(request.parse().await);
 
-    let server_stream = log_err!(request.send(state.as_ref()).await).inner().await;
-
-    let server_stream = log_err!(server_stream.map_err(|_| Error::ServerIncompatible));
+    let server_stream = log_err!(request.send(state.as_ref()).await);
 
     log_err!(reverse_proxy(server_stream, client_stream).await);
 }

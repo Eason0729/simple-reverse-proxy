@@ -1,15 +1,16 @@
 use futures::{AsyncWriteExt, StreamExt};
 
-use crate::config;
-use crate::poll::network::{ReadWrapper, WriteWrapper};
-
 use super::header;
 use super::{http::*, startline};
-use std::cmp;
+use crate::config;
+use crate::poll::network::{ReadWrapper, WriteWrapper};
+use futures::AsyncReadExt;
 use std::collections::VecDeque;
+use std::io::Read;
+use std::{cmp, io, marker};
 use std::{net, time::Duration};
 
-const CHUNK_SIZE: usize = 1024;
+const CHUNK_SIZE: usize = 8192;
 
 // When error happen, drop the request
 // print error and panic if cfg(debug_assertions) is enable
@@ -34,16 +35,22 @@ macro_rules! recover {
     };
 }
 
-pub struct Request<S> {
-    model: Model<net::TcpStream, S>,
+pub struct Request<I, S>
+where
+    I: io::Read + io::Write + marker::Unpin,
+{
+    model: Model<I, S>,
     keep_alive: usize,
     content_length: usize,
     host: Vec<u8>,
 }
 
-impl Request<stage::StartLine> {
-    pub fn new(stream: &net::TcpStream) -> Result<Request<stage::StartLine>, Error> {
-        let model = Model::from_tcp(stream).unwrap();
+impl<I> Request<I, stage::StartLine>
+where
+    I: io::Read + io::Write + marker::Unpin,
+{
+    pub fn new(stream: I) -> Result<Request<I, stage::StartLine>, Error> {
+        let model = Model::new(stream);
         Ok(Request {
             model,
             keep_alive: 2,
@@ -52,7 +59,7 @@ impl Request<stage::StartLine> {
         })
     }
 
-    pub async fn parse(mut self) -> Result<Request<stage::MessageBody>, Error> {
+    pub async fn parse(mut self) -> Result<Request<I, stage::MessageBody>, Error> {
         let startline = recover!(self.model.next().await, Error::ClientIncompatible).unwrap();
         let mut model = self.model.skip();
 
@@ -88,17 +95,18 @@ impl Request<stage::StartLine> {
     }
 }
 
-impl Request<stage::MessageBody> {
+impl<I> Request<I, stage::MessageBody>
+where
+    I: io::Read + io::Write + marker::Unpin,
+{
     pub async fn send(
         mut self,
         config: &config::Config,
         // addr: net::SocketAddr,
-    ) -> Result<WriteWrapper<net::TcpStream>, Error> {
-        let (block, mut reader) = self.model.into_parts();
+    ) -> Result<net::TcpStream, Error> {
+        let (reader, read_buffer, unread_buffer) = self.model.into_parts();
 
-        //bad partice
-
-        let reader = &mut reader;
+        let mut reader = ReadWrapper::new(reader);
 
         let addr = match config.domain_mapping.get(&self.host) {
             Some(x) => x,
@@ -107,24 +115,45 @@ impl Request<stage::MessageBody> {
             }
         };
 
+        let mut remaining_byte = self.content_length;
         let upstream = recover!(net::TcpStream::connect(addr), Error::ServerIncompatible);
-        let mut writer = WriteWrapper::new(upstream);
+        let mut writer = WriteWrapper::new(io::BufWriter::new(recover!(
+            upstream.try_clone(),
+            Error::ServerIncompatible
+        )));
 
-        recover!(writer.write(&block).await, Error::ServerIncompatible);
+        recover!(writer.write(&read_buffer).await, Error::ServerIncompatible);
+
+        let byte_sent = writer
+            .write(&unread_buffer[0..remaining_byte])
+            .await
+            .map_err(|_| Error::ServerIncompatible)?;
+
+        remaining_byte -= byte_sent;
+
+        let mut chunk = [0_u8; CHUNK_SIZE];
 
         loop {
-            if self.content_length == 0 {
+            if remaining_byte == 0 {
                 break;
             }
-            let plan_to_read = cmp::min(self.content_length, CHUNK_SIZE);
-            let chunk: Vec<u8> = reader.take(plan_to_read).collect().await;
+
+            let plan_to_read = cmp::min(remaining_byte, CHUNK_SIZE);
+
+            let byte_read: usize = recover!(
+                reader.read(&mut chunk[0..plan_to_read]).await,
+                Error::ServerIncompatible
+            );
 
             self.content_length -= plan_to_read;
 
-            recover!(writer.write(&chunk).await, Error::ServerIncompatible);
+            recover!(
+                writer.write(&chunk[0..byte_read]).await,
+                Error::ServerIncompatible
+            );
         }
 
-        Ok(writer)
+        Ok(upstream)
     }
 }
 
@@ -138,10 +167,10 @@ pub mod reverse_proxy {
         client: net::TcpStream,
         server: net::TcpStream,
     ) -> Result<(), Error> {
-        let mut writer = WriteWrapper::new(server);
-        let mut reader = ReadWrapper::new(client);
+        let mut writer = WriteWrapper::new(io::BufWriter::new(server));
+        let mut reader = ReadWrapper::new(io::BufReader::new(client));
 
-        let buffer = &mut [0_u8; 4096].to_vec();
+        let buffer = &mut [0_u8; CHUNK_SIZE].to_vec();
         loop {
             let byte_read = match reader.read(buffer).await {
                 Ok(x) => x,

@@ -7,12 +7,14 @@ use std::{
     marker,
 };
 
+use super::network::ReadWrapper;
+
 const CHUNK_SIZE: usize = 8192;
 pub struct ReadableStream<I>
 where
     I: Read,
 {
-    reader: io::BufReader<I>,
+    reader: I,
     buffer: VecDeque<u8>,
 }
 
@@ -20,22 +22,36 @@ impl<I> ReadableStream<I>
 where
     I: io::Read,
 {
-    pub fn new(stream: I) -> Self {
+    pub fn new(reader: I) -> Self {
         ReadableStream {
-            reader: io::BufReader::new(stream),
+            reader,
             buffer: VecDeque::with_capacity(CHUNK_SIZE),
         }
     }
-    pub fn into_parts(mut self)->(I,Vec<u8>){
-        todo!()
-        // let buffer_leftover=self.buffer.make_contiguous();
-        // let reader_leftover=self.reader.buffer();
+    pub fn into_parts(mut self) -> (I, Vec<u8>) {
+        let buffer_leftover = self.buffer.make_contiguous();
+        let reader = self.reader;
 
-        // (self.reader.into_inner(),reader_leftover)
-        // todo!()
+        (reader, buffer_leftover.to_vec())
     }
-
 }
+
+// impl<I> Into<ReadWrapper<I>> for ReadableStream<I> where I: io::Read {
+//     fn into(mut self) -> ReadWrapper<I> {
+
+//         // let buffer_leftover=self.buffer.make_contiguous();
+//         // let reader=&self.reader;
+
+//         // // (reader,[buffer_leftover,reader_leftover].concat());
+
+//         // buffer_leftover;
+
+//         // ReadWrapper::new(reader);
+
+//         // todo!()
+//     }
+// }
+
 impl ReadableStream<net::TcpStream> {
     pub fn from_tcp(stream: &net::TcpStream) -> Result<Self, io::Error> {
         let stream = stream.try_clone()?;
@@ -73,7 +89,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use std::net;
+    use std::{fs, net};
 
     use futures::StreamExt;
 
@@ -90,5 +106,18 @@ mod test {
             String::from_utf8_lossy(expect_result),
             String::from_utf8_lossy(&content)
         );
+    }
+    #[test]
+    fn playground() {
+        let mut f1 = fs::File::open("foo.txt").unwrap();
+        let mut f2 = fs::File::open("bar.txt").unwrap();
+
+        let mut handle = f1.chain(f2);
+        let mut buffer = String::new();
+
+        // read the value into a String. We could use any Read method here,
+        // this is just one example.
+        handle.read_to_string(&mut buffer).unwrap();
+        dbg!(buffer);
     }
 }

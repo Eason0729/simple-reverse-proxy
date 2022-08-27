@@ -7,17 +7,15 @@ pub struct ReadWrapper<I>
 where
     I: io::Read,
 {
-    reader: io::BufReader<I>,
+    reader: I,
 }
 
 impl<I> ReadWrapper<I>
 where
     I: io::Read,
 {
-    pub fn new(stream: I) -> Self {
-        ReadWrapper {
-            reader: io::BufReader::new(stream),
-        }
+    pub fn new(reader: I) -> Self {
+        ReadWrapper { reader }
     }
 }
 impl ReadWrapper<net::TcpStream> {
@@ -48,21 +46,19 @@ pub struct WriteWrapper<I>
 where
     I: io::Write,
 {
-    writer: io::BufWriter<I>,
+    writer: I,
 }
 
 impl<I> WriteWrapper<I>
 where
     I: io::Write,
 {
-    pub fn new(stream: I) -> Self {
-        WriteWrapper {
-            writer: io::BufWriter::new(stream),
-        }
+    pub fn new(writer: I) -> Self {
+        WriteWrapper { writer }
     }
-    pub async fn inner(mut self) -> Result<I, io::Error> {
+    pub async fn into_parts(mut self) -> Result<I, io::Error> {
         self.writer.flush()?;
-        Ok(self.writer.into_parts().0)
+        Ok(self.writer)
     }
 }
 impl WriteWrapper<net::TcpStream> {
@@ -81,11 +77,13 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<io::Result<usize>> {
-        #[cfg(debug_assertions)]
-        assert_ne!(buf.len(), 0);
-        let s = self.get_mut();
-        let byte_sent = s.writer.write(buf)?;
-        Poll::Ready(Ok(byte_sent))
+        if buf.len() == 0 {
+            Poll::Ready(Ok(0))
+        } else {
+            let s = self.get_mut();
+            let byte_sent = s.writer.write(buf)?;
+            Poll::Ready(Ok(byte_sent))
+        }
     }
 
     fn poll_flush(
