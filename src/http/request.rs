@@ -7,7 +7,7 @@ use futures::AsyncReadExt;
 use std::net;
 use std::{cmp, io, marker};
 
-const CHUNK_SIZE: usize = 8192;
+const CHUNK_SIZE: usize = 16384;
 
 // When error happen, drop the request
 // print error and panic if cfg(debug_assertions) is enable
@@ -18,7 +18,7 @@ pub enum Error {
     BadProtocal,
 }
 
-// Come with a marco
+// Come with a macro
 #[cfg(debug_assertions)]
 macro_rules! recover {
     ($i:expr,$e:expr) => {
@@ -169,7 +169,7 @@ pub mod reverse_proxy {
         let mut writer = WriteWrapper::new(io::BufWriter::new(server));
         let mut reader = ReadWrapper::new(io::BufReader::new(client));
 
-        let buffer = &mut [0_u8; CHUNK_SIZE].to_vec();
+        let buffer = &mut [0_u8; CHUNK_SIZE];
         loop {
             let byte_read = match reader.read(buffer).await {
                 Ok(x) => x,

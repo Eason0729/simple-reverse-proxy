@@ -1,0 +1,18 @@
+[package]
+name = "object"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+quote = "1.0"
+proc-macro2="1.0"
+futures = "*"
+
+[dependencies.syn]
+version="1.0"
+features=["full","extra-traits"]
+
+[lib]
+proc-macro = true

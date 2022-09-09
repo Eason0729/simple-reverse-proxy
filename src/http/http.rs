@@ -95,7 +95,7 @@ mod test {
     use super::*;
     use crate::config::hash;
 
-    #[async_std::test]
+    #[object::test]
     async fn startline_parsing() {
         let stream = fs::File::open("test/startline").unwrap();
         let mut model = Model::<fs::File, stage::StartLine>::new(stream);
@@ -114,7 +114,7 @@ mod test {
         assert_eq!(result2, None);
     }
 
-    #[async_std::test]
+    #[object::test]
     async fn headerfield_parsing() {
         let stream = fs::File::open("test/headerfield").unwrap();
         let mut model = Model::<fs::File, stage::HeaderField>::new(stream);

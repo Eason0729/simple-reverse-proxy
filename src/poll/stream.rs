@@ -93,7 +93,7 @@ mod test {
 
     use super::*;
 
-    #[async_std::test]
+    #[object::test]
     async fn tcp_read() {
         // sending request to a non-standard http server, which reply "Hello World msg" instantly without sending of nothing.
         let expect_result="HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n<!DOCTYPE html><html><head><title>Bye-bye baby bye-bye</title><style>body { background-color: #111 }h1 { font-size:4cm; text-align: center; color: black; text-shadow: 0 0 2mm red}</style></head><body><h1>Some random content</h1></body></html>\r\n".as_bytes();
@@ -105,17 +105,17 @@ mod test {
             String::from_utf8_lossy(&content)
         );
     }
-    #[test]
-    fn playground() {
-        let mut f1 = fs::File::open("foo.txt").unwrap();
-        let mut f2 = fs::File::open("bar.txt").unwrap();
+    // #[test]
+    // fn playground() {
+    //     let mut f1 = fs::File::open("foo.txt").unwrap();
+    //     let mut f2 = fs::File::open("bar.txt").unwrap();
 
-        let mut handle = f1.chain(f2);
-        let mut buffer = String::new();
+    //     let mut handle = f1.chain(f2);
+    //     let mut buffer = String::new();
 
-        // read the value into a String. We could use any Read method here,
-        // this is just one example.
-        handle.read_to_string(&mut buffer).unwrap();
-        dbg!(buffer);
-    }
+    //     // read the value into a String. We could use any Read method here,
+    //     // this is just one example.
+    //     handle.read_to_string(&mut buffer).unwrap();
+    //     dbg!(buffer);
+    // }
 }

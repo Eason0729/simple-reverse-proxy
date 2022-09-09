@@ -82,7 +82,7 @@ mod test {
 
     use super::*;
 
-    #[async_std::test]
+    #[object::test]
     async fn read_until() {
         let file = fs::File::open("test/res2").unwrap();
 
