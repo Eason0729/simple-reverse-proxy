@@ -1,6 +1,8 @@
 use crate::arr::Object;
 use std::fmt::Debug;
 use std::mem;
+use std::ops::Deref;
+use std::pin::Pin;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{mem::swap, sync::atomic::AtomicPtr};
@@ -29,8 +31,7 @@ where
         self.len() == 0
     }
     fn push(&mut self, data: C) {
-        let data = Box::leak::<'a>(Box::new(Node::new(data)));
-        let node = Box::new(data);
+        let node=Box::pin(Node::new(data));
 
         let mut head_ptr = self.head.next.load(Ordering::Relaxed);
         let node_ptr = node.next.load(Ordering::Relaxed);
@@ -44,12 +45,16 @@ where
             head_ptr = self.head.next.load(Ordering::Relaxed);
         }
         self.size.fetch_add(1, Ordering::Relaxed);
+
+        mem::forget(node);
     }
 
     fn pop(&mut self) -> C {
         let mut head_ptr = self.head.next.load(Ordering::Relaxed);
+        
         let mut drop_ptr;
         let data;
+
         unsafe {
             drop_ptr = (*head_ptr).next.load(Ordering::Relaxed);
             data = Box::from_raw(drop_ptr);
@@ -154,3 +159,4 @@ mod test {
         assert_eq!(result, 0_usize);
     }
 }
+// cargo test --package object --lib -- pool::test::stack_test --exact --nocapture
