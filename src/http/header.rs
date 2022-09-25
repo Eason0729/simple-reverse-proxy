@@ -1,4 +1,4 @@
-use crate::config::hash;
+use crate::config::prelude::hash;
 use std::borrow::Cow;
 use std::{cmp, mem};
 

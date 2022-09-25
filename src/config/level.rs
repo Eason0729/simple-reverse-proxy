@@ -167,6 +167,17 @@ impl TryInto<f64> for &Value {
     }
 }
 
+impl TryInto<i64> for &Value {
+    type Error = Error;
+
+    fn try_into(self) -> Result<i64, Self::Error> {
+        if let Value::Number(a) = self {
+            return Ok(*a as i64);
+        }
+        Err(Error::MisMatchType)
+    }
+}
+
 impl TryInto<String> for &Value {
     type Error = Error;
 

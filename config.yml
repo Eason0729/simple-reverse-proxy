@@ -1,0 +1,12 @@
+server:
+  addr: "0.0.0.0:8081"
+  thread: 4
+hosts:
+  a.example.com:
+    header-rewrite: true
+    routing:
+      - 127.0.0.1:8000
+      - www.example.com:8081
+  www.example.com:
+    routing:
+      - 127.0.0.1:8000

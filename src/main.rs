@@ -1,33 +1,28 @@
 mod config;
 mod http;
-// mod object;
 mod poll;
 mod pool;
-mod state;
 
+use config::prelude::*;
 use http::prelude::*;
 use pool::*;
-use std::env::var;
 use std::net;
 use std::sync::Arc;
 
 fn main() {
-    let server_socket_addr = var("ADDR").unwrap_or("0.0.0.0:80".to_string());
-    let listener = net::TcpListener::bind(server_socket_addr).unwrap();
+    let config = Arc::new(AppState::new("config.yml"));
 
-    let cpus;
-    unsafe {
-        cpus = libc::sysconf(libc::_SC_NPROCESSORS_ONLN);
-    }
-    let cpus: usize = (cpus).try_into().unwrap();
-    let process_thread: usize = var("THREAD").unwrap_or(cpus.to_string()).parse().unwrap();
+    let thread = config.thread;
+    let addr = config.addr.clone();
+
+    let listener = net::TcpListener::bind(addr.clone()).unwrap();
+
+    let mut pool = Pool::new((thread).try_into().unwrap(), &future_handler);
+
     println!(
-        "running on system with {:?} logic core ({:?} threads)",
-        cpus, process_thread
+        "running on system with {:?} threads on address {:?}",
+        thread, addr
     );
-
-    let config = Arc::new(config::Config::new());
-    let mut pool = Pool::new((process_thread).try_into().unwrap(), &future_handler);
 
     for stream in listener.incoming() {
         let stream = stream.unwrap();
@@ -39,7 +34,7 @@ fn future_handler(future: impl futures::Future<Output = ()>) {
     futures::executor::block_on(future);
 }
 
-async fn handle_request(config: (Arc<config::Config>, net::TcpStream)) {
+async fn handle_request(config: (Arc<AppState>, net::TcpStream)) {
     macro_rules! log_err {
         ($i:expr) => {
             match $i {

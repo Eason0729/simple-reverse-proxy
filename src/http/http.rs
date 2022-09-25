@@ -93,7 +93,7 @@ mod test {
     use std::fs;
 
     use super::*;
-    use crate::config::hash;
+    use crate::config::prelude::hash;
 
     #[object::test]
     async fn startline_parsing() {

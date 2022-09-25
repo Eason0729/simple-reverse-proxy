@@ -1,7 +1,7 @@
 use futures::AsyncWriteExt;
 
 use super::{header, http::*};
-use crate::config;
+use crate::config::prelude::*;
 use crate::poll::network::{ReadWrapper, WriteWrapper};
 use futures::AsyncReadExt;
 use std::net;
@@ -100,14 +100,14 @@ where
 {
     pub async fn send(
         mut self,
-        config: &config::Config,
+        config: &AppState,
         // addr: net::SocketAddr,
     ) -> Result<net::TcpStream, Error> {
         let (reader, read_buffer, unread_buffer) = self.model.into_parts();
 
         let mut reader = ReadWrapper::new(reader);
 
-        let addr = match config.domain_mapping.get(&self.host) {
+        let addr = match config.route(self.host) {
             Some(x) => x,
             None => {
                 return Err(Error::ClientIncompatible);
@@ -186,6 +186,7 @@ pub mod reverse_proxy {
             if byte_read == 0 {
                 break;
             }
+
             writer
                 .write(&buffer[0..byte_read])
                 .await

@@ -9,24 +9,28 @@
 1. Download the project and compile
 
 ```shell
-git clone 
+git clone ...
 ```
 
-2. Edit ``config.properties``
+2. Edit ``config.yml``
 
-```properties
-sub1.example.com=127.0.0.1:8001
-sub2.example.com=mybackend.example.com:80
+```yml
+server:
+  addr: "0.0.0.0:8081"
+  thread: 4
+hosts:
+  a.example.com:
+    header-rewrite: true # experimental
+    routing:
+      - 127.0.0.1:8000
+      - www.example.com:8081
+  www.example.com:
+    routing:
+      - 127.0.0.1:8000
 ```
+Remove comments in yml file before execute the program
 
-3. Set environment variable
-
-```env
-ADDR=0.0.0.0:80
-THREAD=4
-```
-
-4. Ready to run
+3. Ready to run
 
 ## Limitation
 

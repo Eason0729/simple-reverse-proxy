@@ -84,7 +84,7 @@ impl Parser {
         fn recursive_parsing(node: Node, tree: &mut Tree<String>) -> Level {
             let value = node.value(tree).clone();
             if value.trim_end().ends_with(":") {
-                let (value, field) = value.split_once(":").unwrap();
+                let value=value.strip_suffix(":").unwrap();
                 let children: Vec<Level> = node
                     .children(tree)
                     .into_iter()
@@ -149,7 +149,7 @@ mod test {
         let parser = Parser::new(reader);
         let root = parser.parse();
 
-        let val:f64 = root.value(vec!["a"]).unwrap().try_into().unwrap();
+        let val: f64 = root.value(vec!["a"]).unwrap().try_into().unwrap();
         assert_eq!(val, 1.3);
     }
 }
