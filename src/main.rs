@@ -3,6 +3,7 @@ mod http;
 // mod object;
 mod poll;
 mod pool;
+mod state;
 
 use config::*;
 use http::prelude::*;

@@ -1,0 +1,9 @@
+a.example.com:
+  routing:
+    - 127.0.0.1:8000
+    - b.example.com:8001
+b.example.com:
+  header-rewrite: true
+  routing:
+    127.0.0.1:8000:
+      weight: 3

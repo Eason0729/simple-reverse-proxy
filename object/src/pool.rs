@@ -31,7 +31,10 @@ where
         self.len() == 0
     }
     fn push(&mut self, data: C) {
-        let node=Box::pin(Node::new(data));
+        let node = Box::pin(Node::new(data));
+
+        // let node = Box::new(Node::new(data));
+        // let node = Box::leak(node);
 
         let mut head_ptr = self.head.next.load(Ordering::Relaxed);
         let node_ptr = node.next.load(Ordering::Relaxed);
@@ -47,11 +50,12 @@ where
         self.size.fetch_add(1, Ordering::Relaxed);
 
         mem::forget(node);
+        // mem::ManuallyDrop(node);
     }
 
     fn pop(&mut self) -> C {
         let mut head_ptr = self.head.next.load(Ordering::Relaxed);
-        
+
         let mut drop_ptr;
         let data;
 
@@ -81,7 +85,7 @@ where
 #[derive(Debug)]
 struct Node<C> {
     pub data: C,
-    next: AtomicPtr<Node<C>>,
+    next: AtomicPtr<Node<C>>, // Another Node on the heap
 }
 
 impl<C> Node<C> {
@@ -152,9 +156,18 @@ mod test {
     use super::*;
 
     #[test]
+    fn stack_test_p1() {
+        let mut stack = AtomicStack::new();
+        stack.push(0_usize);
+        // verify the next AtomicPtr exist
+        dbg!(stack.head.next);
+    }
+
+    #[test]
     fn stack_test() {
         let mut stack = AtomicStack::new();
         stack.push(0_usize);
+        // try to access the next pointer on the "head"
         let result = stack.pop();
         assert_eq!(result, 0_usize);
     }
