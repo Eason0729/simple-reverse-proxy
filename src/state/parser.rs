@@ -22,12 +22,12 @@ struct Line {
     value: String,
 }
 
-struct Parser {
+pub struct Parser {
     lines: Vec<Line>,
 }
 
 impl Parser {
-    fn new<S>(stream: S) -> Self
+    pub fn new<S>(stream: S) -> Self
     where
         S: io::Read + io::BufRead,
     {
@@ -77,12 +77,11 @@ impl Parser {
         tree
     }
 
-    fn parse(self) -> Level {
+    pub fn parse(self) -> Level {
         let tree = &mut self.tree();
         tree.root().set_value(tree, "root:".to_string());
 
         fn recursive_parsing(node: Node, tree: &mut Tree<String>) -> Level {
-            println!("!");
             let value = node.value(tree).clone();
             if value.trim_end().ends_with(":") {
                 let (value, field) = value.split_once(":").unwrap();
@@ -128,10 +127,29 @@ mod test {
     use std::fs;
 
     #[test]
-    fn all() {
-        let file = fs::File::open("test/basicyml").unwrap();
+    fn lists() {
+        let file = fs::File::open("test/defaultyml").unwrap();
         let reader = io::BufReader::new(file);
         let parser = Parser::new(reader);
-        dbg!(parser.parse());
+        let root = parser.parse();
+
+        let lists: Vec<String> = root
+            .list(vec!["hosts", "a.example.com", "routing"])
+            .unwrap()
+            .into_iter()
+            .map(|x| x.try_into().unwrap())
+            .collect();
+        assert_eq!(vec!["127.0.0.1:8000", "b.example.com:8001",], lists)
+    }
+
+    #[test]
+    fn value_f64() {
+        let file = fs::File::open("test/simpleyml").unwrap();
+        let reader = io::BufReader::new(file);
+        let parser = Parser::new(reader);
+        let root = parser.parse();
+
+        let val:f64 = root.value(vec!["a"]).unwrap().try_into().unwrap();
+        assert_eq!(val, 1.3);
     }
 }

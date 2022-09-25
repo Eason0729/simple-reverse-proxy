@@ -5,7 +5,6 @@ mod poll;
 mod pool;
 mod state;
 
-use config::*;
 use http::prelude::*;
 use pool::*;
 use std::env::var;

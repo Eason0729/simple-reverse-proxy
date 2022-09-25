@@ -5,3 +5,5 @@
 /.env
 /flamegraph.svg
 /perf.data
+/core
+/object/core
