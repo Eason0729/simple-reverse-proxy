@@ -84,7 +84,7 @@ impl Parser {
         fn recursive_parsing(node: Node, tree: &mut Tree<String>) -> Level {
             let value = node.value(tree).clone();
             if value.trim_end().ends_with(":") {
-                let value=value.strip_suffix(":").unwrap();
+                let value = value.strip_suffix(":").unwrap();
                 let children: Vec<Level> = node
                     .children(tree)
                     .into_iter()

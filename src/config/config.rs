@@ -1,4 +1,3 @@
-use std::cell;
 use std::hash::{Hash, Hasher};
 use std::net::ToSocketAddrs;
 use std::{
@@ -60,6 +59,9 @@ impl AppState {
     pub fn hash(&self, domain: &str) -> u64 {
         hash(domain)
     }
+    pub fn shorten(&mut self) {
+        todo!()
+    }
 }
 
 #[derive(Debug)]
@@ -67,7 +69,7 @@ struct Balancer {
     counter: atomic::AtomicUsize,
     addrs: Vec<net::SocketAddr>,
     #[cfg(debug_assertions)]
-    domain:String
+    domain: String,
 }
 
 impl Balancer {
@@ -114,7 +116,7 @@ impl TryFrom<&level::Level> for Host {
             counter: atomic::AtomicUsize::new(0),
             addrs,
             #[cfg(debug_assertions)]
-            domain:val.to_string()
+            domain: val.to_string(),
         };
 
         Ok(Host(hashed_domain, balancer))

@@ -1,5 +1,3 @@
-use std::f32::consts::E;
-
 #[derive(Debug)]
 pub enum Error {
     Unknown,

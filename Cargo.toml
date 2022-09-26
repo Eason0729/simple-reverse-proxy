@@ -15,9 +15,6 @@ codegen-units = 1
 incremental = false
 debug = true
 
-[target.'cfg(not(windows))'.dependencies]
-libc = "0.2"
-
 [dependencies]
 futures = "*"
 

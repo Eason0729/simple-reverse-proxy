@@ -17,5 +17,5 @@ RUN cargo install --target ${TARGET} --path .
 
 FROM scratch
 COPY --from=builder /usr/local/cargo/bin/simple-reverse-proxy .
-COPY ./config.properties .
+COPY ./config.yml .
 CMD ["./simple-reverse-proxy"]

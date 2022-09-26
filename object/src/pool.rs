@@ -1,11 +1,7 @@
-use crate::arr::Object;
 use std::fmt::Debug;
 use std::mem;
-use std::ops::Deref;
-use std::pin::Pin;
-use std::ptr::NonNull;
+use std::sync::atomic::AtomicPtr;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::{mem::swap, sync::atomic::AtomicPtr};
 
 #[derive(Debug)]
 pub struct AtomicStack<C> {
