@@ -1,7 +1,6 @@
 use std::fmt::Debug;
-use std::mem;
-use std::sync::atomic::AtomicPtr;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::mem::MaybeUninit;
+use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 #[derive(Debug)]
 pub struct AtomicStack<C> {
@@ -23,40 +22,43 @@ impl<C> Drop for Wrapper<C> {
 }
 
 impl<C> Wrapper<C> {
+    #[inline]
     fn as_mut_ref(&mut self) -> &mut C {
         let node;
         unsafe {
             node = &mut *self.content;
+            node.data.assume_init_mut()
         }
-        &mut node.data
     }
+    #[inline]
     fn as_ref(&self) -> &C {
         let node;
         unsafe {
             node = &*self.content;
+            node.data.assume_init_ref()
         }
-        &node.data
     }
 }
 
-impl<'a, C> AtomicStack<C>
-where
-    C: Default + Debug + 'a,
-{
+impl<'a, C> AtomicStack<C> {
+    #[inline]
     pub fn new() -> Self {
-        let head = *Node::new(C::default());
+        let head = *Node::dangling();
         AtomicStack {
             size: AtomicUsize::new(0),
             head,
         }
     }
-    pub fn len(&mut self) -> usize {
+    #[inline]
+    pub fn len(&self) -> usize {
         self.size.load(Ordering::Relaxed)
     }
-    pub fn is_empty(&mut self) -> bool {
+    #[inline]
+    pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    pub fn push(&mut self, data: C) {
+    #[inline]
+    pub fn push(&self, data: C) {
         let node = Node::leak_new(data);
 
         unsafe {
@@ -66,67 +68,89 @@ where
         self.size.fetch_add(1, Ordering::Relaxed);
     }
 
-    pub fn pop(&mut self) -> Option<Wrapper<C>> {
+    #[inline]
+    pub fn pop(&self) -> Option<Wrapper<C>> {
         if self.sub_or_empty() {
             None
         } else {
-            Some(self.unchecked_pop())
+            unsafe { Some(self.unchecked_pop()) }
         }
     }
 
-    pub unsafe fn unchecked_pop(&mut self) -> Wrapper<C> {
-        let head = &self.head;
-        let next = head.next.load(Ordering::Relaxed);
-        unsafe {
-            while !head.swap_next(&*next) {
-                let next = head.next.load(Ordering::Relaxed);
-            }
+    #[inline]
+    pub unsafe fn unchecked_pop(&self) -> Wrapper<C> {
+        let mut next = self.head.next.load(Ordering::Relaxed);
+        while !self.head.swap_next(&*next) {
+            next = self.head.next.load(Ordering::Relaxed);
         }
         let dropped = next;
         Wrapper { content: dropped }
     }
 
     #[cfg(test)]
-    fn peek(&mut self) -> &C {
+    fn peek(&self) -> &C {
         let node;
         unsafe {
             node = &*self.head.next.load(Ordering::Relaxed);
+            node.data.assume_init_ref()
         }
-        &node.data
     }
-    fn sub_or_empty(&mut self) -> bool {
-        let size = self.size.get_mut();
-        return if size == &0_usize {
-            true
-        } else {
-            *size = 0_usize;
-            false
-        };
+    
+    #[inline]
+    fn sub_or_empty(&self) -> bool {
+        let mut result = true;
+        while self
+            .size
+            .fetch_update(Ordering::Release, Ordering::Relaxed, |size| {
+                if size == 0_usize {
+                    result = true;
+                    Some(size)
+                } else {
+                    result = false;
+                    Some(size - 1)
+                }
+            })
+            .is_err()
+        {}
+        result
     }
 }
 
 #[derive(Debug)]
 struct Node<C> {
-    pub data: C,
+    data: MaybeUninit<C>,
     next: AtomicPtr<Node<C>>,
 }
 
 impl<C> Node<C> {
     /// Creates a new self-referenced [`Node<C>`].
+    #[inline]
     fn new(data: C) -> Box<Self> {
         let node = Node {
-            data,
+            data: MaybeUninit::new(data),
             next: AtomicPtr::default(),
         };
         let mut node = Box::new(node);
         node.next = AtomicPtr::new(&mut *node as *mut _);
         node
     }
+    #[inline]
+    fn dangling() -> Box<Self> {
+        let node = Node {
+            data: MaybeUninit::uninit(),
+            next: AtomicPtr::default(),
+        };
+        let mut node = Box::new(node);
+        node.next = AtomicPtr::new(&mut *node as *mut _);
+        node
+    }
+    #[inline]
     fn leak_new(data: C) -> *mut Self {
         let node = Self::new(data);
         let ptr = Box::leak(node);
         ptr
     }
+    #[inline]
     fn swap_next(&self, node: &Node<C>) -> bool {
         let self_next = self.next.load(Ordering::Relaxed);
         let node_next = node.next.load(Ordering::Relaxed);
@@ -137,64 +161,18 @@ impl<C> Node<C> {
     }
 }
 
-// pub struct LinkRing<T> {
-//     pub data: T,
-//     next: NonNull<AtomicPtr<LinkRing<T>>>,
-// }
-
-// impl<T> LinkRing<T>
-// where
-//     T: Clone,
-// {
-//     fn new(inner: Vec<T>) -> LinkRing<T> {
-//         #[cfg(debug_assertions)]
-//         assert!(inner.len() > 0);
-
-//         let mut previous: Option<LinkRing<T>> = None;
-
-//         for iter in 0..inner.len() {
-//             let mut current = LinkRing {
-//                 data: inner[iter].clone(),
-//                 next: NonNull::<AtomicPtr<LinkRing<T>>>::dangling(),
-//             };
-//             let mut current_ptr = AtomicPtr::new(&mut current as *mut LinkRing<T>);
-
-//             current.next = NonNull::new(&mut current_ptr as *mut _).unwrap();
-
-//             if iter != 0 {
-//                 swap(&mut current.next, &mut previous.unwrap().next);
-//             }
-
-//             previous = Some(current);
-//         }
-//         previous.unwrap()
-//     }
-// }
-
-// pub struct Pool<T>
-// where
-//     T: Object,
-// {
-//     datas: LinkRing<T>,
-// }
-
-// pub struct Container<'a, T>
-// where
-//     T: Object,
-// {
-//     data: T,
-//     pool: &'a Pool<T>,
-// }
-
 #[cfg(test)]
 mod test {
-    use std::sync::atomic::Ordering;
+    use std::{
+        sync::{atomic::Ordering, Arc},
+        thread::{self, Thread},
+    };
 
     use super::*;
 
     #[test]
-    fn stack_test() {
-        let mut stack = AtomicStack::new();
+    fn stack_peek() {
+        let stack = AtomicStack::new();
         stack.push(0_usize);
         let result = stack.peek();
         assert_eq!(*result, 0_usize);
@@ -202,9 +180,25 @@ mod test {
 
     #[test]
     fn stack_pop() {
-        let mut stack = AtomicStack::new();
+        let stack = AtomicStack::new();
         stack.push(0_usize);
-        let result = stack.pop().unwrap();
-        assert_eq!(*result.as_ref(), 0_usize);
+        assert_eq!(*stack.pop().unwrap().as_ref(), 0_usize);
+        stack.push(1_usize);
+        assert_eq!(*stack.pop().unwrap().as_ref(), 1_usize);
+    }
+
+    #[test]
+    fn stack_multi_threading() {
+        let stack = AtomicStack::new();
+        let stack = Box::leak(Box::new(stack));
+        let mut threads = vec![];
+        for _ in 0..10 {
+            threads.push(thread::spawn(|| {
+                for _ in 0..100 {
+                    stack.push(3_usize);
+                    assert_eq!(3_usize, *stack.pop().unwrap().as_ref())
+                }
+            }));
+        }
     }
 }
