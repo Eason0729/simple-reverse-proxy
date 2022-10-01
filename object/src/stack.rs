@@ -65,7 +65,7 @@ impl<'a, C> AtomicStack<C> {
             let node = &mut *node;
             while !node.swap_next(&self.head) {}
         }
-        self.size.fetch_add(1, Ordering::Relaxed);
+        self.size.fetch_add(1, Ordering::Release);
     }
 
     #[inline]
@@ -79,9 +79,9 @@ impl<'a, C> AtomicStack<C> {
 
     #[inline]
     pub unsafe fn unchecked_pop(&self) -> Wrapper<C> {
-        let mut next = self.head.next.load(Ordering::Relaxed);
+        let mut next = self.head.next.load(Ordering::Acquire);
         while !self.head.swap_next(&*next) {
-            next = self.head.next.load(Ordering::Relaxed);
+            next = self.head.next.load(Ordering::Acquire);
         }
         let dropped = next;
         Wrapper { content: dropped }
@@ -101,7 +101,7 @@ impl<'a, C> AtomicStack<C> {
         let mut result = true;
         while self
             .size
-            .fetch_update(Ordering::Release, Ordering::Relaxed, |size| {
+            .fetch_update(Ordering::Acquire, Ordering::Acquire, |size| {
                 if size == 0_usize {
                     result = true;
                     Some(size)
@@ -156,7 +156,7 @@ impl<C> Node<C> {
         let node_next = node.next.load(Ordering::Relaxed);
 
         self.next
-            .compare_exchange(self_next, node_next, Ordering::Release, Ordering::Relaxed)
+            .compare_exchange(self_next, node_next, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok()
     }
 }
@@ -185,6 +185,10 @@ mod test {
         assert_eq!(*stack.pop().unwrap().as_ref(), 0_usize);
         stack.push(1_usize);
         assert_eq!(*stack.pop().unwrap().as_ref(), 1_usize);
+        stack.push(2_usize);
+        stack.push(3_usize);
+        assert_eq!(*stack.pop().unwrap().as_ref(), 2_usize);
+        assert_eq!(*stack.pop().unwrap().as_ref(), 3_usize);
     }
 
     #[test]
