@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 /// scalable lock-free stack(Treiber Stack) designed for concurrency programing
 ///
-/// The [`AtomicStack<C>`] is FILO.
+/// The [`AtomicStack<C>`] operate dataflow in FILO.
 #[derive(Debug)]
 pub struct AtomicStack<C>
 where
@@ -21,13 +21,9 @@ where
     /// Creates a new [`AtomicStack<C>`].
     #[inline]
     pub fn new() -> Self {
-        let node = Box::into_raw(Node::new(MaybeUninit::uninit()));
-        let head = AtomicPtr::new(node);
-        unsafe {
-            (&*head.load(Ordering::SeqCst))
-                .next
-                .store(node, Ordering::SeqCst);
-        }
+        // let node = Box::into_raw(Node::new(MaybeUninit::uninit()));
+        // let head = AtomicPtr::new(node);
+        let head = AtomicPtr::default();
         AtomicStack {
             length: AtomicUsize::new(0),
             head,
@@ -40,7 +36,7 @@ where
         let node = Box::leak(node);
 
         loop {
-            let mut head = self.head.load(Ordering::Relaxed);
+            let head = self.head.load(Ordering::Relaxed);
             node.next.store(head, Ordering::Relaxed);
 
             if self
@@ -62,13 +58,12 @@ where
         loop {
             let head = self.head.load(Ordering::Acquire);
             let dropped = unsafe { (*head).next.load(Ordering::Acquire) };
-            if self
-                .head
-                .compare_exchange(head, dropped, Ordering::Release, Ordering::Relaxed)
-                .is_ok()
+            if let Ok(head) =
+                self.head
+                    .compare_exchange(head, dropped, Ordering::Release, Ordering::Relaxed)
             {
-                let data = Box::from_raw(head);
-                return GC { node: data };
+                // let data = unsafe { Box::from_raw(head) };
+                return GC { node: head };
             }
         }
     }
@@ -79,18 +74,18 @@ where
     pub fn pop(&self) -> Option<GC<C>> {
         self.length.fetch_sub(1, Ordering::Relaxed);
         loop {
-            let head = self.head.load(Ordering::Acquire);
-            let dropped = unsafe { (*head).next.load(Ordering::Acquire) };
-            if head == dropped {
+            if self.head.load(Ordering::Acquire).is_null() {
                 return None;
             }
-            if self
-                .head
-                .compare_exchange(head, dropped, Ordering::Release, Ordering::Relaxed)
-                .is_ok()
+            let head = self.head.load(Ordering::Acquire);
+            let dropped = unsafe { (*head).next.load(Ordering::Acquire) };
+
+            if let Ok(head) =
+                self.head
+                    .compare_exchange(head, dropped, Ordering::Release, Ordering::Relaxed)
             {
-                let data = unsafe { Box::from_raw(head) };
-                return Some(GC { node: data });
+                // let data = unsafe { Box::from_raw(head) };
+                return Some(GC { node: head });
             }
         }
     }
@@ -103,12 +98,7 @@ where
     #[inline]
     pub fn is_empty(&self) -> bool {
         let head = self.head.load(Ordering::Acquire);
-        let dropped = unsafe { (*head).next.load(Ordering::Acquire) };
-        if head == dropped {
-            false
-        } else {
-            true
-        }
+        head.is_null()
     }
 }
 
@@ -121,9 +111,6 @@ where
         C: Unpin,
     {
         while AtomicStack::pop(&self).is_some() {}
-        unsafe {
-            drop(Box::from_raw(self.head.load(Ordering::Acquire)));
-        }
     }
 }
 
@@ -143,18 +130,26 @@ impl<C> Node<C> {
 
 /// a wrapper for element pop for [`AtomicStack<C>`]
 pub struct GC<T> {
-    node: Box<Node<T>>,
+    node: *mut Node<T>,
 }
 
-impl<C> AsMut<C> for GC<C> {
-    fn as_mut(&mut self) -> &mut C {
-        unsafe { self.node.data.assume_init_mut() }
+impl<T> AsMut<T> for GC<T> {
+    fn as_mut(&mut self) -> &mut T {
+        unsafe { (*self.node).data.assume_init_mut() }
     }
 }
 
-impl<C> AsRef<C> for GC<C> {
-    fn as_ref(&self) -> &C {
-        unsafe { self.node.data.assume_init_ref() }
+impl<T> AsRef<T> for GC<T> {
+    fn as_ref(&self) -> &T {
+        unsafe { (*self.node).data.assume_init_ref() }
+    }
+}
+
+impl<T> Drop for GC<T> {
+    fn drop(&mut self) {
+        unsafe {
+            drop(Box::from_raw(self.node));
+        }
     }
 }
 
@@ -166,6 +161,12 @@ mod test {
     };
 
     use super::*;
+
+    #[test]
+    fn stack_is_empty() {
+        let stack: AtomicStack<usize> = AtomicStack::new();
+        assert!(stack.is_empty());
+    }
 
     #[test]
     fn stack_unchecked_pop() {
