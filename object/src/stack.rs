@@ -61,6 +61,22 @@ where
     }
 
     pub fn pop(&self) -> Option<GarbageCollector<C>> {
+        // match self
+        //     .head
+        //     .fetch_update(Ordering::Release, Ordering::Relaxed, |head| {
+        //         let dropped = unsafe { (*head).next.load(Ordering::Acquire) };
+        //         if head == dropped {
+        //             None
+        //         } else {
+        //             Some(dropped)
+        //         }
+        //     }) {
+        //     Ok(head) => {
+        //         let data = unsafe { Box::from_raw(head) };
+        //         Some(GarbageCollector { node: data })
+        //     }
+        //     Err(_) => None,
+        // }
         let mut head;
         loop {
             head = self.head.load(Ordering::Acquire);

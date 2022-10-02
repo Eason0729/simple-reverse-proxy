@@ -20,7 +20,7 @@ where
     fn reuse(self: &mut Self) {}
 }
 
-macro_rules! empty_reuse {
+macro_rules! impl_reuse {
     ($i:ident) => {
         impl Object for $i {
             fn reuse(self: &mut Self) {}
@@ -28,13 +28,13 @@ macro_rules! empty_reuse {
     };
 }
 
-empty_reuse!(i8);
-empty_reuse!(i16);
-empty_reuse!(i64);
-empty_reuse!(i128);
-empty_reuse!(f32);
-empty_reuse!(f64);
-empty_reuse!(u8);
-empty_reuse!(u16);
-empty_reuse!(u64);
-empty_reuse!(u128);
+impl_reuse!(i8);
+impl_reuse!(i16);
+impl_reuse!(i64);
+impl_reuse!(i128);
+impl_reuse!(f32);
+impl_reuse!(f64);
+impl_reuse!(u8);
+impl_reuse!(u16);
+impl_reuse!(u64);
+impl_reuse!(u128);
