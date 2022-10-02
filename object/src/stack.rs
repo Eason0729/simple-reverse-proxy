@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 #[derive(Debug)]
 pub struct AtomicStack<C> {
     size: AtomicUsize,
-    head: Node<C>,
+    head: Box<Node<C>>,
 }
 
 pub struct Wrapper<C> {
@@ -43,7 +43,7 @@ impl<C> Wrapper<C> {
 impl<'a, C> AtomicStack<C> {
     #[inline]
     pub fn new() -> Self {
-        let head = *Node::dangling();
+        let head = Node::dangling();
         AtomicStack {
             size: AtomicUsize::new(0),
             head,
@@ -60,11 +60,7 @@ impl<'a, C> AtomicStack<C> {
     #[inline]
     pub fn push(&self, data: C) {
         let node = Node::leak_new(data);
-
-        unsafe {
-            let node = &mut *node;
-            while !node.swap_next(&self.head) {}
-        }
+        unsafe { while !self.head.swap_next(&*node) {} }
         self.size.fetch_add(1, Ordering::Release);
     }
 
@@ -78,24 +74,15 @@ impl<'a, C> AtomicStack<C> {
     }
 
     #[inline]
-    pub unsafe fn unchecked_pop(&self) -> Wrapper<C> {
-        let mut next = self.head.next.load(Ordering::Acquire);
-        while !self.head.swap_next(&*next) {
-            next = self.head.next.load(Ordering::Acquire);
-        }
-        let dropped = next;
+    unsafe fn unchecked_pop(&self) -> Wrapper<C> {
+        while !self
+            .head
+            .swap_next(&*self.head.next.load(Ordering::Acquire))
+        {}
+        let dropped = self.head.next.load(Ordering::Acquire);
         Wrapper { content: dropped }
     }
 
-    #[cfg(test)]
-    fn peek(&self) -> &C {
-        let node;
-        unsafe {
-            node = &*self.head.next.load(Ordering::Relaxed);
-            node.data.assume_init_ref()
-        }
-    }
-    
     #[inline]
     fn sub_or_empty(&self) -> bool {
         let mut result = true;
@@ -116,6 +103,14 @@ impl<'a, C> AtomicStack<C> {
     }
 }
 
+impl<C> Drop for AtomicStack<C> {
+    fn drop(&mut self) {
+        #[cfg(test)]
+        println!("dropping AtomicStack with {:?} elements", self.len());
+        while let Some(_) = self.pop() {}
+    }
+}
+
 #[derive(Debug)]
 struct Node<C> {
     data: MaybeUninit<C>,
@@ -125,30 +120,23 @@ struct Node<C> {
 impl<C> Node<C> {
     /// Creates a new self-referenced [`Node<C>`].
     #[inline]
-    fn new(data: C) -> Box<Self> {
+    fn new(data: MaybeUninit<C>) -> Box<Self> {
         let node = Node {
-            data: MaybeUninit::new(data),
+            data: data,
             next: AtomicPtr::default(),
         };
         let mut node = Box::new(node);
-        node.next = AtomicPtr::new(&mut *node as *mut _);
+        node.next = AtomicPtr::new(&mut *node);
         node
     }
     #[inline]
     fn dangling() -> Box<Self> {
-        let node = Node {
-            data: MaybeUninit::uninit(),
-            next: AtomicPtr::default(),
-        };
-        let mut node = Box::new(node);
-        node.next = AtomicPtr::new(&mut *node as *mut _);
-        node
+        Self::new(MaybeUninit::uninit())
     }
     #[inline]
     fn leak_new(data: C) -> *mut Self {
-        let node = Self::new(data);
-        let ptr = Box::leak(node);
-        ptr
+        let node = Self::new(MaybeUninit::new(data));
+        Box::into_raw(node)
     }
     #[inline]
     fn swap_next(&self, node: &Node<C>) -> bool {
@@ -158,6 +146,18 @@ impl<C> Node<C> {
         self.next
             .compare_exchange(self_next, node_next, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok()
+    }
+}
+
+#[cfg(test)]
+impl<C> Drop for Node<C> {
+    fn drop(&mut self) {
+        unsafe {
+            let expect_self = self.next.load(Ordering::Relaxed);
+            let next = (&*expect_self).next.load(Ordering::Relaxed);
+            assert_eq!(expect_self, next);
+            println!("drop node");
+        }
     }
 }
 
@@ -172,23 +172,23 @@ mod test {
 
     #[test]
     fn stack_peek() {
-        let stack = AtomicStack::new();
+        let stack: AtomicStack<usize> = AtomicStack::new();
         stack.push(0_usize);
-        let result = stack.peek();
-        assert_eq!(*result, 0_usize);
+        stack.push(1_usize);
+        stack.push(2_usize);
+        // try to peek stack to test if it leak in miri
+        unsafe {
+            dbg!(&*stack.head.next.load(Ordering::Relaxed));
+        }
     }
 
     #[test]
     fn stack_pop() {
         let stack = AtomicStack::new();
-        stack.push(0_usize);
-        assert_eq!(*stack.pop().unwrap().as_ref(), 0_usize);
-        stack.push(1_usize);
-        assert_eq!(*stack.pop().unwrap().as_ref(), 1_usize);
         stack.push(2_usize);
         stack.push(3_usize);
-        assert_eq!(*stack.pop().unwrap().as_ref(), 2_usize);
         assert_eq!(*stack.pop().unwrap().as_ref(), 3_usize);
+        assert_eq!(*stack.pop().unwrap().as_ref(), 2_usize);
     }
 
     #[test]
