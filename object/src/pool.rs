@@ -1,13 +1,13 @@
 use crate::{
     object::Object,
-    stack::{GarbageCollector, TreiberStack},
+    stack::{AtomicStack, GC},
 };
 
 pub struct ObjectPool<C>
 where
     C: Object + Unpin,
 {
-    stack: TreiberStack<C>,
+    stack: AtomicStack<C>,
 }
 
 impl<C> ObjectPool<C>
@@ -16,7 +16,7 @@ where
 {
     fn new() -> Self {
         ObjectPool {
-            stack: TreiberStack::new(),
+            stack: AtomicStack::new(),
         }
     }
 }

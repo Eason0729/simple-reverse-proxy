@@ -1,20 +1,25 @@
 use std::fmt::Debug;
 use std::mem::MaybeUninit;
-use std::pin::Pin;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
+/// scalable lock-free stack(Treiber Stack) designed for concurrency programing
+///
+/// The [`AtomicStack<C>`] is FILO.
 #[derive(Debug)]
-pub struct TreiberStack<C>
+pub struct AtomicStack<C>
 where
     C: Unpin,
 {
+    length: AtomicUsize,
     head: AtomicPtr<Node<C>>,
 }
 
-impl<C> TreiberStack<C>
+impl<C> AtomicStack<C>
 where
     C: Unpin,
 {
+    /// Creates a new [`AtomicStack<C>`].
+    #[inline]
     pub fn new() -> Self {
         let node = Box::into_raw(Node::new(MaybeUninit::uninit()));
         let head = AtomicPtr::new(node);
@@ -23,10 +28,15 @@ where
                 .next
                 .store(node, Ordering::SeqCst);
         }
-        TreiberStack { head }
+        AtomicStack {
+            length: AtomicUsize::new(0),
+            head,
+        }
     }
-    pub fn push(&self, data: C) {
-        let node = Node::new(MaybeUninit::new(data));
+    /// Push a element into the stack
+    #[inline]
+    pub fn push(&self, element: C) {
+        let node = Node::new(MaybeUninit::new(element));
         let node = Box::leak(node);
 
         loop {
@@ -38,48 +48,38 @@ where
                 .compare_exchange(head, node, Ordering::Release, Ordering::Relaxed)
                 .is_ok()
             {
+                self.length.fetch_add(1, Ordering::Relaxed);
                 break;
             }
         }
     }
-    pub unsafe fn unchecked_pop(&self) -> GarbageCollector<C> {
-        let mut head;
+    /// Pop a element of the stack without checking whether the stack is empty or not
+    ///
+    /// Returns the wrapped element [`GC<C>] from the top of stack
+    #[inline]
+    pub unsafe fn unchecked_pop(&self) -> GC<C> {
+        self.length.fetch_sub(1, Ordering::Relaxed);
         loop {
-            head = self.head.load(Ordering::Acquire);
+            let head = self.head.load(Ordering::Acquire);
             let dropped = unsafe { (*head).next.load(Ordering::Acquire) };
             if self
                 .head
                 .compare_exchange(head, dropped, Ordering::Release, Ordering::Relaxed)
                 .is_ok()
             {
-                break;
+                let data = Box::from_raw(head);
+                return GC { node: data };
             }
         }
-
-        let data = Box::from_raw(head);
-        GarbageCollector { node: data }
     }
-
-    pub fn pop(&self) -> Option<GarbageCollector<C>> {
-        // match self
-        //     .head
-        //     .fetch_update(Ordering::Release, Ordering::Relaxed, |head| {
-        //         let dropped = unsafe { (*head).next.load(Ordering::Acquire) };
-        //         if head == dropped {
-        //             None
-        //         } else {
-        //             Some(dropped)
-        //         }
-        //     }) {
-        //     Ok(head) => {
-        //         let data = unsafe { Box::from_raw(head) };
-        //         Some(GarbageCollector { node: data })
-        //     }
-        //     Err(_) => None,
-        // }
-        let mut head;
+    /// Pop a element of the [`AtomicStack<C>`]
+    ///
+    /// Returns the option of wrapped element [`Option<GC<C>>]
+    #[inline]
+    pub fn pop(&self) -> Option<GC<C>> {
+        self.length.fetch_sub(1, Ordering::Relaxed);
         loop {
-            head = self.head.load(Ordering::Acquire);
+            let head = self.head.load(Ordering::Acquire);
             let dropped = unsafe { (*head).next.load(Ordering::Acquire) };
             if head == dropped {
                 return None;
@@ -89,15 +89,30 @@ where
                 .compare_exchange(head, dropped, Ordering::Release, Ordering::Relaxed)
                 .is_ok()
             {
-                break;
+                let data = unsafe { Box::from_raw(head) };
+                return Some(GC { node: data });
             }
         }
-        let data = unsafe { Box::from_raw(head) };
-        Some(GarbageCollector { node: data })
+    }
+    /// Returns the length of this [`AtomicStack<C>`].
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.length.load(Ordering::Acquire)
+    }
+    /// Returns true if the [`AtomicStack<C>`] is empty
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        let head = self.head.load(Ordering::Acquire);
+        let dropped = unsafe { (*head).next.load(Ordering::Acquire) };
+        if head == dropped {
+            false
+        } else {
+            true
+        }
     }
 }
 
-impl<C> Drop for TreiberStack<C>
+impl<C> Drop for AtomicStack<C>
 where
     C: Unpin,
 {
@@ -105,7 +120,7 @@ where
     where
         C: Unpin,
     {
-        while TreiberStack::pop(&self).is_some() {}
+        while AtomicStack::pop(&self).is_some() {}
         unsafe {
             drop(Box::from_raw(self.head.load(Ordering::Acquire)));
         }
@@ -126,17 +141,18 @@ impl<C> Node<C> {
     }
 }
 
-pub struct GarbageCollector<T> {
+/// a wrapper for element pop for [`AtomicStack<C>`]
+pub struct GC<T> {
     node: Box<Node<T>>,
 }
 
-impl<C> AsMut<C> for GarbageCollector<C> {
+impl<C> AsMut<C> for GC<C> {
     fn as_mut(&mut self) -> &mut C {
         unsafe { self.node.data.assume_init_mut() }
     }
 }
 
-impl<C> AsRef<C> for GarbageCollector<C> {
+impl<C> AsRef<C> for GC<C> {
     fn as_ref(&self) -> &C {
         unsafe { self.node.data.assume_init_ref() }
     }
@@ -153,7 +169,7 @@ mod test {
 
     #[test]
     fn stack_unchecked_pop() {
-        let stack = TreiberStack::new();
+        let stack = AtomicStack::new();
         stack.push(1001_usize);
         stack.push(1002_usize);
         stack.push(1003_usize);
@@ -168,7 +184,7 @@ mod test {
 
     #[test]
     fn stack_pop() {
-        let stack = TreiberStack::new();
+        let stack = AtomicStack::new();
         stack.push(1002_usize);
         stack.push(1003_usize);
         stack.push(1004_usize);
@@ -180,7 +196,7 @@ mod test {
 
     #[test]
     fn stack_multi_threading() {
-        let stack = TreiberStack::new();
+        let stack = AtomicStack::new();
         let stack = Box::leak(Box::new(stack));
         let mut threads = vec![];
         for _ in 0..10 {
