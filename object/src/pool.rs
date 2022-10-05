@@ -1,22 +1,22 @@
-use crate::{
-    object::Object,
-    stack::{AtomicStack, GC},
-};
+// use crate::{
+//     object::Object,
+//     stack::{AtomicStack, Wrapper},
+// };
 
-pub struct ObjectPool<C>
-where
-    C: Object + Unpin,
-{
-    stack: AtomicStack<C>,
-}
+// pub struct ObjectPool<C>
+// where
+//     C: Object + Unpin,
+// {
+//     stack: AtomicStack<C>,
+// }
 
-impl<C> ObjectPool<C>
-where
-    C: Object + Unpin,
-{
-    fn new() -> Self {
-        ObjectPool {
-            stack: AtomicStack::new(),
-        }
-    }
-}
+// impl<C> ObjectPool<C>
+// where
+//     C: Object + Unpin,
+// {
+//     fn new() -> Self {
+//         ObjectPool {
+//             stack: AtomicStack::new(),
+//         }
+//     }
+// }

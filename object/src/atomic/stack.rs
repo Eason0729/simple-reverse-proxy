@@ -1,5 +1,4 @@
 use std::fmt::Debug;
-use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 /// scalable lock-free stack(Treiber Stack) designed for concurrency programing
@@ -32,7 +31,7 @@ where
     /// Push a element into the stack
     #[inline]
     pub fn push(&self, element: C) {
-        let node = Node::new(MaybeUninit::new(element));
+        let node = Node::new(element);
         let node = Box::leak(node);
 
         loop {
@@ -51,9 +50,9 @@ where
     }
     /// Pop a element of the stack without checking whether the stack is empty or not
     ///
-    /// Returns the wrapped element [`GC<C>] from the top of stack
+    /// Returns the wrapped element [`Wrapper<C>] from the top of stack
     #[inline]
-    pub unsafe fn unchecked_pop(&self) -> GC<C> {
+    pub unsafe fn unchecked_pop(&self) -> Wrapper<C> {
         self.length.fetch_sub(1, Ordering::Relaxed);
         loop {
             let head = self.head.load(Ordering::Acquire);
@@ -63,15 +62,15 @@ where
                     .compare_exchange(head, dropped, Ordering::Release, Ordering::Relaxed)
             {
                 // let data = unsafe { Box::from_raw(head) };
-                return GC { node: head };
+                return Wrapper { node: head };
             }
         }
     }
     /// Pop a element of the [`AtomicStack<C>`]
     ///
-    /// Returns the option of wrapped element [`Option<GC<C>>]
+    /// Returns the option of wrapped element [`Option<Wrapper<C>>]
     #[inline]
-    pub fn pop(&self) -> Option<GC<C>> {
+    pub fn pop(&self) -> Option<Wrapper<C>> {
         self.length.fetch_sub(1, Ordering::Relaxed);
         loop {
             if self.head.load(Ordering::Acquire).is_null() {
@@ -85,7 +84,7 @@ where
                     .compare_exchange(head, dropped, Ordering::Release, Ordering::Relaxed)
             {
                 // let data = unsafe { Box::from_raw(head) };
-                return Some(GC { node: head });
+                return Some(Wrapper { node: head });
             }
         }
     }
@@ -115,12 +114,12 @@ where
 }
 
 pub struct Node<C> {
-    data: MaybeUninit<C>,
+    data: C,
     next: AtomicPtr<Node<C>>,
 }
 
 impl<C> Node<C> {
-    fn new(data: MaybeUninit<C>) -> Box<Self> {
+    fn new(data: C) -> Box<Self> {
         Box::new(Node {
             data,
             next: AtomicPtr::default(),
@@ -129,23 +128,23 @@ impl<C> Node<C> {
 }
 
 /// a wrapper for element pop for [`AtomicStack<C>`]
-pub struct GC<T> {
+pub struct Wrapper<T> {
     node: *mut Node<T>,
 }
 
-impl<T> AsMut<T> for GC<T> {
+impl<T> AsMut<T> for Wrapper<T> {
     fn as_mut(&mut self) -> &mut T {
-        unsafe { (*self.node).data.assume_init_mut() }
+        unsafe { &mut (*self.node).data }
     }
 }
 
-impl<T> AsRef<T> for GC<T> {
+impl<T> AsRef<T> for Wrapper<T> {
     fn as_ref(&self) -> &T {
-        unsafe { (*self.node).data.assume_init_ref() }
+        unsafe { &(*self.node).data }
     }
 }
 
-impl<T> Drop for GC<T> {
+impl<T> Drop for Wrapper<T> {
     fn drop(&mut self) {
         unsafe {
             drop(Box::from_raw(self.node));
