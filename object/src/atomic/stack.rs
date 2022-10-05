@@ -1,5 +1,12 @@
 use std::fmt::Debug;
+use std::mem;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+
+use super::epoch::Global;
+use super::epoch::Local;
+
+const STACK_CAP: usize = 16;
+const STACK_LIMIT: usize = 32;
 
 /// scalable lock-free stack(Treiber Stack) designed for concurrency programing
 ///
@@ -11,6 +18,7 @@ where
 {
     length: AtomicUsize,
     head: AtomicPtr<Node<C>>,
+    garbage_collector: Global<Node<C>, 16>,
 }
 
 impl<C> AtomicStack<C>
@@ -18,23 +26,30 @@ where
     C: Unpin,
 {
     /// Creates a new [`AtomicStack<C>`].
-    #[inline]
     pub fn new() -> Self {
-        // let node = Box::into_raw(Node::new(MaybeUninit::uninit()));
-        // let head = AtomicPtr::new(node);
-        let head = AtomicPtr::default();
+        let global: Global<Node<C>, STACK_CAP> = Global::new();
         AtomicStack {
             length: AtomicUsize::new(0),
-            head,
+            head: AtomicPtr::default(),
+            garbage_collector: global,
         }
     }
+    /// Garbage collector(local) are used to prevent access invaild reference when pop
+    ///
+    /// Returns the garbage collector(local) corresponded to this [`AtomicStack<C>`].
+    pub fn get_local_garbage_collector(&self) -> Local<'_, Node<C>, STACK_LIMIT, STACK_CAP> {
+        let mut local = Local::new(&self.garbage_collector);
+        local.pin();
+        local.unpin();
+        local
+    }
     /// Push a element into the stack
-    #[inline]
-    pub fn push(&self, element: C) {
+    pub fn push(&self, element: C, gc:&mut Local<'_, Node<C>, STACK_LIMIT, STACK_CAP>) {
         let node = Node::new(element);
         let node = Box::leak(node);
 
         loop {
+            gc.pin();
             let head = self.head.load(Ordering::Relaxed);
             node.next.store(head, Ordering::Relaxed);
 
@@ -46,33 +61,36 @@ where
                 self.length.fetch_add(1, Ordering::Relaxed);
                 break;
             }
+            gc.unpin();
         }
     }
     /// Pop a element of the stack without checking whether the stack is empty or not
     ///
     /// Returns the wrapped element [`Wrapper<C>] from the top of stack
-    #[inline]
-    pub unsafe fn unchecked_pop(&self) -> Wrapper<C> {
+    pub unsafe fn unchecked_pop(&self, gc: &mut Local<'_, Node<C>, STACK_LIMIT, STACK_CAP>) -> &mut C {
         self.length.fetch_sub(1, Ordering::Relaxed);
         loop {
+            gc.pin();
             let head = self.head.load(Ordering::Acquire);
             let dropped = unsafe { (*head).next.load(Ordering::Acquire) };
             if let Ok(head) =
                 self.head
                     .compare_exchange(head, dropped, Ordering::Release, Ordering::Relaxed)
             {
-                // let data = unsafe { Box::from_raw(head) };
-                return Wrapper { node: head };
+                let data=unsafe{&mut *(*head).data};
+                gc.collect_garbage(head);
+                return data;
             }
+            gc.unpin();
         }
     }
     /// Pop a element of the [`AtomicStack<C>`]
     ///
     /// Returns the option of wrapped element [`Option<Wrapper<C>>]
-    #[inline]
-    pub fn pop(&self) -> Option<Wrapper<C>> {
+    pub fn pop(&self, gc: &mut Local<'_, Node<C>, STACK_LIMIT, STACK_CAP>) -> Option<&mut C> {
         self.length.fetch_sub(1, Ordering::Relaxed);
         loop {
+            gc.pin();
             if self.head.load(Ordering::Acquire).is_null() {
                 return None;
             }
@@ -83,18 +101,18 @@ where
                 self.head
                     .compare_exchange(head, dropped, Ordering::Release, Ordering::Relaxed)
             {
-                // let data = unsafe { Box::from_raw(head) };
-                return Some(Wrapper { node: head });
+                let data=unsafe{&mut *(*head).data};
+                gc.collect_garbage(head);
+                return Some(data);
             }
+            gc.unpin();
         }
     }
     /// Returns the length of this [`AtomicStack<C>`].
-    #[inline]
     pub fn len(&self) -> usize {
         self.length.load(Ordering::Acquire)
     }
     /// Returns true if the [`AtomicStack<C>`] is empty
-    #[inline]
     pub fn is_empty(&self) -> bool {
         let head = self.head.load(Ordering::Acquire);
         head.is_null()
@@ -109,46 +127,24 @@ where
     where
         C: Unpin,
     {
-        while AtomicStack::pop(&self).is_some() {}
+        let gc=&mut self.get_local_garbage_collector();
+        while AtomicStack::pop(&self,gc).is_some() {}
     }
 }
 
+#[derive(Debug)]
 pub struct Node<C> {
-    data: C,
+    data: *mut C,
     next: AtomicPtr<Node<C>>,
 }
 
 impl<C> Node<C> {
     fn new(data: C) -> Box<Self> {
+        let ptr=Box::into_raw(Box::new(data));
         Box::new(Node {
-            data,
+            data:ptr,
             next: AtomicPtr::default(),
         })
-    }
-}
-
-/// a wrapper for element pop for [`AtomicStack<C>`]
-pub struct Wrapper<T> {
-    node: *mut Node<T>,
-}
-
-impl<T> AsMut<T> for Wrapper<T> {
-    fn as_mut(&mut self) -> &mut T {
-        unsafe { &mut (*self.node).data }
-    }
-}
-
-impl<T> AsRef<T> for Wrapper<T> {
-    fn as_ref(&self) -> &T {
-        unsafe { &(*self.node).data }
-    }
-}
-
-impl<T> Drop for Wrapper<T> {
-    fn drop(&mut self) {
-        unsafe {
-            drop(Box::from_raw(self.node));
-        }
     }
 }
 
@@ -170,28 +166,30 @@ mod test {
     #[test]
     fn stack_unchecked_pop() {
         let stack = AtomicStack::new();
-        stack.push(1001_usize);
-        stack.push(1002_usize);
-        stack.push(1003_usize);
-        stack.push(1004_usize);
+        let gc=&mut stack.get_local_garbage_collector();
+        stack.push(1001_usize,gc);
+        stack.push(1002_usize,gc);
+        stack.push(1003_usize,gc);
+        stack.push(1004_usize,gc);
         unsafe {
-            assert_eq!(*stack.unchecked_pop().as_ref(), 1004_usize);
-            assert_eq!(*stack.unchecked_pop().as_ref(), 1003_usize);
-            assert_eq!(*stack.unchecked_pop().as_ref(), 1002_usize);
-            assert_eq!(*stack.unchecked_pop().as_ref(), 1001_usize);
+            assert_eq!(*stack.unchecked_pop(gc), 1004_usize);
+            assert_eq!(*stack.unchecked_pop(gc), 1003_usize);
+            assert_eq!(*stack.unchecked_pop(gc), 1002_usize);
+            assert_eq!(*stack.unchecked_pop(gc), 1001_usize);
         }
     }
 
     #[test]
     fn stack_pop() {
         let stack = AtomicStack::new();
-        stack.push(1002_usize);
-        stack.push(1003_usize);
-        stack.push(1004_usize);
-        assert_eq!(*stack.pop().unwrap().as_ref(), 1004_usize);
-        assert_eq!(*stack.pop().unwrap().as_ref(), 1003_usize);
-        assert_eq!(*stack.pop().unwrap().as_ref(), 1002_usize);
-        assert!(stack.pop().as_ref().is_none());
+        let gc=&mut stack.get_local_garbage_collector();
+        stack.push(1002_usize,gc);
+        stack.push(1003_usize,gc);
+        stack.push(1004_usize,gc);
+        assert_eq!(*stack.pop(gc).unwrap(), 1004_usize);
+        assert_eq!(*stack.pop(gc).unwrap(), 1003_usize);
+        assert_eq!(*stack.pop(gc).unwrap(), 1002_usize);
+        assert!(stack.pop(gc).as_ref().is_none());
     }
 
     #[test]
@@ -201,9 +199,10 @@ mod test {
         let mut threads = vec![];
         for _ in 0..10 {
             threads.push(thread::spawn(|| {
+                let gc=&mut stack.get_local_garbage_collector();
                 for _ in 0..100 {
-                    stack.push(1008_usize);
-                    assert_eq!(1008_usize, *stack.pop().unwrap().as_ref())
+                    stack.push(1008_usize,gc);
+                    assert_eq!(1008_usize, *stack.pop(gc).unwrap())
                 }
             }));
         }

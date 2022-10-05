@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 
 //  empty  |  inuse  |  active  |
 //    finished    inuse     end
+#[derive(Debug)]
 pub struct AtomicBuffer<T, const CAP: usize> {
     finish: AtomicUsize,
     // inuse: AtomicUsize,
@@ -37,12 +38,11 @@ impl<T, const CAP: usize> AtomicBuffer<T, CAP> {
     where
         F: Fn(&mut T) + Send + Sync,
     {
-        self.pop_iter_ptr(|ptr|unsafe{
-            let reference=&mut *ptr;
+        self.pop_iter_ptr(|ptr| unsafe {
+            let reference = &mut *ptr;
             f(reference);
             drop(Box::from_raw(ptr));
         });
-
     }
     pub fn pop_iter_ptr<F>(&self, f: F)
     where
@@ -83,9 +83,7 @@ mod test {
         buffer.push(1001_usize);
         buffer.push(1001_usize);
         buffer.push(1001_usize);
-        buffer.pop_iter(|x|
-            assert_eq!(*x,1001_usize)
-        );
+        buffer.pop_iter(|x| assert_eq!(*x, 1001_usize));
     }
 
     // #[test]
