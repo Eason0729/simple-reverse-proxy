@@ -5,6 +5,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 //  empty  |  inuse  |  active  |
 //    finished    inuse     end
+
+/// A non-growable VecDequeue designed for concurrency programing
+/// 
+/// [`AtomicBuffer<T, CAP>`] allow multiple reader reading or multiple writer writing simultaneously,
+/// but no read and write simultaneously
+/// 
+/// CAP is the max element size of [`AtomicBuffer<T, CAP>`]
 #[derive(Debug)]
 pub struct AtomicBuffer<T, const CAP: usize> {
     finish: AtomicUsize,
@@ -58,28 +65,6 @@ impl<T, const CAP: usize> AtomicBuffer<T, CAP> {
             self.container[index].set(null_mut());
         }
     }
-    // pub fn pop_iter<F>(&self, f: F)
-    // where
-    //     F: Fn(&mut T) + Send + Sync,
-    // {
-    //     self.pop_iter_ptr(|ptr| unsafe {
-    //         let reference = &mut *ptr;
-    //         f(reference);
-    //         drop(Box::from_raw(ptr));
-    //     });
-    // }
-    // pub fn pop_iter_ptr<F>(&self, f: F)
-    // where
-    //     F: Fn(*mut T) + Send + Sync,
-    // {
-    //     let right_bound = self.end.load(Ordering::Relaxed);
-    //     let left_bound = self.finish.swap(right_bound, Ordering::Relaxed);
-    //     for index in left_bound..right_bound {
-    //         let index = index % CAP;
-    //         f(self.container[index].get());
-    //         self.container[index].set(null_mut());
-    //     }
-    // }
 }
 
 impl<T, const CAP: usize> Drop for AtomicBuffer<T, CAP> {
@@ -115,7 +100,7 @@ mod test {
 
     #[test]
     fn vec_deque_multi_threading() {
-        let vec_dequeue: AtomicBuffer<usize, 1024> = AtomicBuffer::new();
+        let vec_dequeue: AtomicBuffer<usize, 1000> = AtomicBuffer::new();
         thread::scope(|s| {
             for _ in 0..10 {
                 s.spawn(|| {

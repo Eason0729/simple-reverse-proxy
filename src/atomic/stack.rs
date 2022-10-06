@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use super::epoch::Global;
 use super::epoch::Local;
 
-const STACK_CAP: usize = 33; // >= (thread_count*2 + 1)
-const STACK_LIMIT: usize = 8; // >= 2
+const STACK_G_CAP: usize = 33; // >= (thread_count*2 + 1)
+const STACK_L_CAP: usize = 8; // >= 2
 
 /// scalable lock-free stack(Treiber Stack) designed for concurrency programing
 ///
@@ -17,7 +17,7 @@ where
 {
     length: AtomicUsize,
     head: AtomicPtr<Node<C>>,
-    garbage_collector: Global<Node<C>, STACK_CAP>,
+    garbage_collector: Global<Node<C>, STACK_G_CAP>,
 }
 
 impl<C> AtomicStack<C>
@@ -26,7 +26,7 @@ where
 {
     /// Creates a new [`AtomicStack<C>`].
     pub fn new() -> Self {
-        let global: Global<Node<C>, STACK_CAP> = Global::new();
+        let global: Global<Node<C>, STACK_G_CAP> = Global::new();
         AtomicStack {
             length: AtomicUsize::new(0),
             head: AtomicPtr::default(),
@@ -36,14 +36,14 @@ where
     /// Garbage collector(local) are used to prevent access to invaild ptr
     ///
     /// Returns the garbage collector(local) corresponded to this [`AtomicStack<C>`].
-    pub fn get_gc(&self) -> Local<'_, Node<C>, STACK_LIMIT, STACK_CAP> {
+    pub fn get_gc(&self) -> Local<'_, Node<C>, STACK_L_CAP, STACK_G_CAP> {
         let mut local = Local::new(&self.garbage_collector);
         local.pin();
         local.unpin();
         local
     }
     /// Push a element into the stack
-    pub fn push(&self, element: C, gc: &mut Local<'_, Node<C>, STACK_LIMIT, STACK_CAP>) {
+    pub fn push(&self, element: C, gc: &mut Local<'_, Node<C>, STACK_L_CAP, STACK_G_CAP>) {
         let node = Node::new(element);
         let node = Box::leak(node);
 
@@ -66,7 +66,7 @@ where
     /// Pop a element of the [`AtomicStack<C>`]
     ///
     /// Returns the option of wrapped element [`Option<Wrapper<C>>]
-    pub fn pop(&self, gc: &mut Local<'_, Node<C>, STACK_LIMIT, STACK_CAP>) -> Option<Box<C>> {
+    pub fn pop(&self, gc: &mut Local<'_, Node<C>, STACK_L_CAP, STACK_G_CAP>) -> Option<Box<C>> {
         self.length.fetch_sub(1, Ordering::Relaxed);
         loop {
             gc.pin();
@@ -80,11 +80,11 @@ where
                 self.head
                     .compare_exchange(head, dropped, Ordering::Release, Ordering::Relaxed)
             {
-                let mut data = unsafe { Box::from_raw((*head).data) };
+                let data = unsafe { Box::from_raw((*head).data) };
                 gc.collect_garbage(head);
+                gc.unpin();
                 return Some(data);
             }
-            gc.unpin();
         }
     }
     /// Returns the length of this [`AtomicStack<C>`].
@@ -142,22 +142,6 @@ mod test {
         assert!(stack.is_empty());
     }
 
-    // #[test]
-    // fn stack_unchecked_pop() {
-    //     let stack = AtomicStack::new();
-    //     let gc = &mut stack.get_gc();
-    //     stack.push(1001_usize, gc);
-    //     stack.push(1002_usize, gc);
-    //     stack.push(1003_usize, gc);
-    //     stack.push(1004_usize, gc);
-    //     unsafe {
-    //         assert_eq!(*stack.unchecked_pop(gc), 1004_usize);
-    //         assert_eq!(*stack.unchecked_pop(gc), 1003_usize);
-    //         assert_eq!(*stack.unchecked_pop(gc), 1002_usize);
-    //         assert_eq!(*stack.unchecked_pop(gc), 1001_usize);
-    //     }
-    // }
-
     #[test]
     fn stack_pop() {
         let stack = AtomicStack::new();
@@ -178,7 +162,7 @@ mod test {
             for _ in 0..10 {
                 s.spawn(|| {
                     let gc = &mut stack.get_gc();
-                    for _ in 0..500 {
+                    for _ in 0..100 {
                         stack.push(1008_usize, gc);
                         assert_eq!(1008_usize, *stack.pop(gc).unwrap())
                     }

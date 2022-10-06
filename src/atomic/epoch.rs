@@ -62,29 +62,25 @@ impl<T, const CAP: usize> Global<T, CAP> {
         if self.status[(epoch + 3 - 1) % 3].load(Ordering::Relaxed) == 0 {
             // recycle the previous epoch(bags)
             let previous_epoch = (epoch + 3 - 1) % 3;
-            // pin before any operation
-            self.status[previous_epoch].fetch_add(1, Ordering::Acquire);
+            let current_epoch = (epoch) % 3;
+            //pin current epoch
+            self.status[current_epoch].fetch_add(1, Ordering::Relaxed);
             // cleanup all box
             while self.bags[previous_epoch].pop().is_some(){};
+            //unpin current epoch
+            self.status[current_epoch].fetch_sub(1, Ordering::Relaxed);
             // advance to next epoch
             #[allow(unused_must_use)]
             {
                 self.epoch
                     .compare_exchange(epoch, epoch + 1, Ordering::AcqRel, Ordering::Acquire);
             }
-            // unpin
-            self.status[previous_epoch].fetch_sub(1, Ordering::Acquire);
-            // consider a condition where calling alloc to reuse the memory is expensive
-            // then Global::bags would overflow
-            // solution:
-            // 1. make AtomicBuffer growable
-            // 2. use pop instead pop_iter
         }
         epoch
     }
 }
 
-pub struct Local<'a, T, const LIMIT: usize, const CAP: usize> {
+pub struct Local<'a, T, const G_CAP: usize, const CAP: usize> {
     epoch: usize,
     size: usize,
     buffer: Bag<T>,
@@ -92,8 +88,8 @@ pub struct Local<'a, T, const LIMIT: usize, const CAP: usize> {
     global: &'a Global<T, CAP>,
 }
 
-impl<'a, T, const LIMIT: usize, const CAP: usize> Local<'a, T, LIMIT, CAP> {
-    pub fn new(global: &'a Global<T, CAP>) -> Local<'a, T, LIMIT, CAP> {
+impl<'a, T, const G_CAP: usize, const CAP: usize> Local<'a, T, G_CAP, CAP> {
+    pub fn new(global: &'a Global<T, CAP>) -> Local<'a, T, G_CAP, CAP> {
         Local {
             epoch: 0,
             size: 0,
@@ -120,7 +116,7 @@ impl<'a, T, const LIMIT: usize, const CAP: usize> Local<'a, T, LIMIT, CAP> {
     }
     pub fn collect_garbage(&mut self, garbage: *mut T) {
         // check local buffer, mirgiate garbage to global if full
-        if self.size == LIMIT {
+        if self.size == G_CAP {
             self.mirgiate();
         }
         self.buffer.push(garbage);
@@ -133,7 +129,7 @@ impl<'a, T, const LIMIT: usize, const CAP: usize> Local<'a, T, LIMIT, CAP> {
     }
 }
 
-impl<'a, T, const LIMIT: usize, const CAP: usize> Drop for Local<'a, T, LIMIT, CAP> {
+impl<'a, T, const G_CAP: usize, const CAP: usize> Drop for Local<'a, T, G_CAP, CAP> {
     fn drop(&mut self) {
         self.mirgiate();
     }
