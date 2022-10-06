@@ -1,3 +1,4 @@
+mod atomic;
 mod config;
 mod http;
 mod poll;

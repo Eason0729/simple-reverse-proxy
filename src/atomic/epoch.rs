@@ -1,6 +1,5 @@
-use std::marker::PhantomData;
+use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
-use std::{ptr::null_mut, sync::atomic::AtomicUsize};
 
 use super::buffer::AtomicBuffer;
 
@@ -28,7 +27,6 @@ impl<T> Bag<T> {
 impl<T> Drop for Bag<T> {
     fn drop(&mut self) {
         for ptr in &self.data {
-            // dangerous
             drop(unsafe { Box::from_raw(ptr.clone()) });
         }
     }
@@ -68,9 +66,11 @@ impl<T, const CAP: usize> Global<T, CAP> {
             // warning: datarace
             self.status[previous_epoch].fetch_add(1, Ordering::Acquire);
             self.bags[previous_epoch].pop_iter(|_| {});
-            self.epoch
-                .compare_exchange(epoch, epoch + 1, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok();
+            #[allow(unused_must_use)]
+            {
+                self.epoch
+                    .compare_exchange(epoch, epoch + 1, Ordering::AcqRel, Ordering::Acquire);
+            }
             self.status[previous_epoch].fetch_sub(1, Ordering::Acquire);
         }
         epoch
@@ -98,7 +98,7 @@ impl<'a, T, const LIMIT: usize, const CAP: usize> Local<'a, T, LIMIT, CAP> {
     pub(super) fn pin(&mut self) {
         // check local pin, synchronize to global epoch if unpinned
         if self.pinned == 0 {
-            self.epoch = self.global.get_epoch()%3;
+            self.epoch = self.global.get_epoch() % 3;
         }
         self.pinned += 1;
         if self.pinned == 1 {
@@ -115,10 +115,38 @@ impl<'a, T, const LIMIT: usize, const CAP: usize> Local<'a, T, LIMIT, CAP> {
         // check local buffer, mirgiate garbage to global if full
         if self.size == LIMIT {
             // warning: should I use local epoch?
-            self.global.bags[self.epoch].push(self.buffer.empty());
+            self.mirgiate();
         }
         self.buffer.push(garbage);
 
         self.size += 1;
+    }
+    #[inline]
+    fn mirgiate(&mut self) {
+        self.global.bags[self.epoch].push(self.buffer.empty());
+    }
+}
+
+impl<'a, T, const LIMIT: usize, const CAP: usize> Drop for Local<'a, T, LIMIT, CAP> {
+    fn drop(&mut self) {
+        self.mirgiate();
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::{Global, Local};
+
+    #[test]
+    fn global_construct() {
+        let global: Global<usize, 12> = Global::new();
+        let local: Local<usize, 12, 12> = Local::new(&global);
+    }
+    #[test]
+    fn local_drop() {
+        let global: Global<usize, 12> = Global::new();
+        let mut local: Local<usize, 12, 12> = Local::new(&global);
+        let data = Box::into_raw(Box::new(0_usize));
+        local.collect_garbage(data);
     }
 }
