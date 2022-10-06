@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use super::epoch::Global;
 use super::epoch::Local;
 
-const STACK_CAP: usize = 16;// >=thread count
-const STACK_LIMIT: usize = 16;// >=2
+const STACK_CAP: usize = 33;// >= (thread_count*2 + 1)
+const STACK_LIMIT: usize = 8;// >= 2
 
 /// scalable lock-free stack(Treiber Stack) designed for concurrency programing
 ///
@@ -17,7 +17,7 @@ where
 {
     length: AtomicUsize,
     head: AtomicPtr<Node<C>>,
-    garbage_collector: Global<Node<C>, 16>,
+    garbage_collector: Global<Node<C>, STACK_CAP>,
 }
 
 impl<C> AtomicStack<C>
@@ -38,7 +38,7 @@ where
     /// Returns the garbage collector(local) corresponded to this [`AtomicStack<C>`].
     pub fn get_gc(&self) -> Local<'_, Node<C>, STACK_LIMIT, STACK_CAP> {
         let mut local = Local::new(&self.garbage_collector);
-        local.pin();
+        local.pin(); 
         local.unpin();
         local
     }
@@ -178,7 +178,7 @@ mod test {
             for _ in 0..10 {
                 s.spawn(|| {
                     let gc = &mut stack.get_gc();
-                    for _ in 0..100 {
+                    for _ in 0..500 {
                         stack.push(1008_usize, gc);
                         assert_eq!(1008_usize, *stack.pop(gc).unwrap())
                     }

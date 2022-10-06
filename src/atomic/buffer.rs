@@ -33,8 +33,10 @@ impl<T, const CAP: usize> AtomicBuffer<T, CAP> {
     fn push_ptr(&self, data: *mut T) {
         let position = self.end.fetch_add(1, Ordering::Relaxed);
         self.container[position % CAP].set(data);
-        // self.inuse.fetch_add(1, Ordering::Relaxed);
     }
+    // pub fn pop(&self)->Box<T>{
+
+    // }
     pub fn pop_iter<F>(&self, f: F)
     where
         F: Fn(&mut T) + Send + Sync,
@@ -54,6 +56,7 @@ impl<T, const CAP: usize> AtomicBuffer<T, CAP> {
         for index in left_bound..right_bound {
             let index = index % CAP;
             f(self.container[index].get());
+            self.container[index].set(null_mut());
         }
     }
 }
