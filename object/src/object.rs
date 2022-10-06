@@ -1,5 +1,3 @@
-use std::ops::Index;
-
 pub trait Object
 where
     Self: Sized,

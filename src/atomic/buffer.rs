@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::f32::consts::E;
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -34,37 +35,57 @@ impl<T, const CAP: usize> AtomicBuffer<T, CAP> {
         let position = self.end.fetch_add(1, Ordering::Relaxed);
         self.container[position % CAP].set(data);
     }
-    // pub fn pop(&self)->Box<T>{
-
-    // }
-    pub fn pop_iter<F>(&self, f: F)
-    where
-        F: Fn(&mut T) + Send + Sync,
-    {
-        self.pop_iter_ptr(|ptr| unsafe {
-            let reference = &mut *ptr;
-            f(reference);
-            drop(Box::from_raw(ptr));
-        });
+    pub fn pop(&self) -> Option<Box<T>> {
+        let position = self.finish.fetch_add(1, Ordering::Relaxed);
+        return if self.container[position % CAP].get().is_null() {
+            self.finish.fetch_sub(1, Ordering::Relaxed);
+            None
+        } else {
+            let ptr = self.container[position % CAP].get();
+            self.container[position % CAP].set(null_mut());
+            Some(unsafe { Box::from_raw(ptr) })
+        };
     }
-    pub fn pop_iter_ptr<F>(&self, f: F)
+    pub fn pop_all<F>(&self, f: F)
     where
-        F: Fn(*mut T) + Send + Sync,
+        F: Fn(Box<T>) + Send + Sync,
     {
         let right_bound = self.end.load(Ordering::Relaxed);
         let left_bound = self.finish.swap(right_bound, Ordering::Relaxed);
         for index in left_bound..right_bound {
             let index = index % CAP;
-            f(self.container[index].get());
+            f(unsafe { Box::from_raw(self.container[index].get()) });
             self.container[index].set(null_mut());
         }
     }
+    // pub fn pop_iter<F>(&self, f: F)
+    // where
+    //     F: Fn(&mut T) + Send + Sync,
+    // {
+    //     self.pop_iter_ptr(|ptr| unsafe {
+    //         let reference = &mut *ptr;
+    //         f(reference);
+    //         drop(Box::from_raw(ptr));
+    //     });
+    // }
+    // pub fn pop_iter_ptr<F>(&self, f: F)
+    // where
+    //     F: Fn(*mut T) + Send + Sync,
+    // {
+    //     let right_bound = self.end.load(Ordering::Relaxed);
+    //     let left_bound = self.finish.swap(right_bound, Ordering::Relaxed);
+    //     for index in left_bound..right_bound {
+    //         let index = index % CAP;
+    //         f(self.container[index].get());
+    //         self.container[index].set(null_mut());
+    //     }
+    // }
 }
 
 impl<T, const CAP: usize> Drop for AtomicBuffer<T, CAP> {
     fn drop(&mut self) {
-        self.pop_iter(|ptr| {
-            drop(ptr);
+        self.pop_all(|b| {
+            drop(b);
         });
     }
 }
@@ -85,9 +106,11 @@ mod test {
     fn vec_deque() {
         let buffer: AtomicBuffer<usize, 128> = AtomicBuffer::new();
         buffer.push(1001_usize);
-        buffer.push(1001_usize);
-        buffer.push(1001_usize);
-        buffer.pop_iter(|x| assert_eq!(*x, 1001_usize));
+        buffer.push(1002_usize);
+        buffer.push(1003_usize);
+        assert_eq!(*buffer.pop().unwrap(),1001_usize);
+        assert_eq!(*buffer.pop().unwrap(),1002_usize);
+        assert_eq!(*buffer.pop().unwrap(),1003_usize);
     }
 
     #[test]
@@ -102,7 +125,7 @@ mod test {
                 });
             }
         });
-        vec_dequeue.pop_iter(|d| {
+        vec_dequeue.pop_all(|d| {
             assert_eq!(*d, 1008_usize);
         });
     }

@@ -62,16 +62,23 @@ impl<T, const CAP: usize> Global<T, CAP> {
         if self.status[(epoch + 3 - 1) % 3].load(Ordering::Relaxed) == 0 {
             // recycle the previous epoch(bags)
             let previous_epoch = (epoch + 3 - 1) % 3;
-            // warning: consider pin when cleaning up
-            // warning: datarace
+            // pin before any operation
             self.status[previous_epoch].fetch_add(1, Ordering::Acquire);
-            self.bags[previous_epoch].pop_iter(|_| {});
+            // cleanup all box
+            while self.bags[previous_epoch].pop().is_some(){};
+            // advance to next epoch
             #[allow(unused_must_use)]
             {
                 self.epoch
                     .compare_exchange(epoch, epoch + 1, Ordering::AcqRel, Ordering::Acquire);
             }
+            // unpin
             self.status[previous_epoch].fetch_sub(1, Ordering::Acquire);
+            // consider a condition where calling alloc to reuse the memory is expensive
+            // then Global::bags would overflow
+            // solution:
+            // 1. make AtomicBuffer growable
+            // 2. use pop instead pop_iter
         }
         epoch
     }
@@ -95,7 +102,7 @@ impl<'a, T, const LIMIT: usize, const CAP: usize> Local<'a, T, LIMIT, CAP> {
             global,
         }
     }
-    pub(super) fn pin(&mut self) {
+    pub fn pin(&mut self) {
         // check local pin, synchronize to global epoch if unpinned
         if self.pinned == 0 {
             self.epoch = self.global.get_epoch() % 3;
@@ -105,16 +112,15 @@ impl<'a, T, const LIMIT: usize, const CAP: usize> Local<'a, T, LIMIT, CAP> {
             self.global.status[self.epoch].fetch_add(1, Ordering::Acquire);
         }
     }
-    pub(super) fn unpin(&mut self) {
+    pub fn unpin(&mut self) {
         self.pinned -= 1;
         if self.pinned == 0 {
             self.global.status[self.epoch].fetch_sub(1, Ordering::Acquire);
         }
     }
-    pub(super) fn collect_garbage(&mut self, garbage: *mut T) {
+    pub fn collect_garbage(&mut self, garbage: *mut T) {
         // check local buffer, mirgiate garbage to global if full
         if self.size == LIMIT {
-            // warning: should I use local epoch?
             self.mirgiate();
         }
         self.buffer.push(garbage);
